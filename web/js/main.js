@@ -118,12 +118,25 @@ function renderStats() {
   statActive.textContent = state.stats.activeKitchens;
   statChefs.textContent = state.stats.chefs;
   statServed.textContent = state.stats.served;
+  // 「已出餐」悬停明细：各厨房出餐数
+  const servedBox = statServed.closest('.stat');
+  if (servedBox) {
+    const per = state.kitchens.filter((k) => (k.servedCount || 0) > 0);
+    servedBox.title = per.length
+      ? '各厨房出餐：\n' + per.map((k) => k.name + ' × ' + k.servedCount).join('\n')
+      : '还没有出餐，等厨师们端出第一道菜～';
+  }
 }
 
 /* ---- 订单流水（Overcooked 票卡，最近 30 条，可过滤当前厨房/全部） ---- */
 let feedMode = 'current';
 const ffCurrent = document.getElementById('ff-current');
 const ffAll = document.getElementById('ff-all');
+if (params.has('feed-all')) { // 调试/截图用：?feed-all=1 直接进入「全部」模式
+  feedMode = 'all';
+  ffAll.classList.add('on');
+  ffCurrent.classList.remove('on');
+}
 ffCurrent.addEventListener('click', () => {
   feedMode = 'current';
   ffCurrent.classList.add('on');
@@ -202,6 +215,10 @@ function renderFeed() {
     li.appendChild(tbar);
 
     const head = el('div', 't-head');
+    // 「全部」模式：票卡左侧（标题行最左）加厨房名小标签；当前厨房模式不加
+    if (feedMode === 'all' && entry.kitchenName) {
+      head.appendChild(el('span', 't-kitchen', entry.kitchenName));
+    }
     head.appendChild(el('span', 't-icon', KIND_ICON[entry.kind] || '•'));
     head.appendChild(el('span', 't-label', entry.label || entry.kind));
     const tTime = el('span', 't-time', fmtRel(entry.ts));
@@ -224,9 +241,6 @@ function renderFeed() {
     }
     li.appendChild(body);
 
-    if (feedMode === 'all' && entry.kitchenName) {
-      li.appendChild(el('div', 't-kitchen', '@ ' + entry.kitchenName));
-    }
     feedEl.appendChild(li);
   });
   if (!shown) {

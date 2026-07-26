@@ -3,7 +3,7 @@
 // 名牌使用 THREE.Sprite —— 天然始终面向镜头
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL } from './palette.js';
-import { nameTexture, bubbleTexture, makeSprite } from './textures.js';
+import { nameTexture, drawBubble, makeSprite } from './textures.js';
 
 // ---------- 共享几何体 ----------
 const G = {};
@@ -126,49 +126,57 @@ export class ChefActor {
     this.nameSprite = makeSprite(nameTexture(this.name, '#' + c.getHexString()), 1.1, 0.28);
     this.nameSprite.position.y = 1.45;
     this.group.add(this.nameSprite);
-    // 动作气泡（默认隐藏）
+    // 动作气泡（默认隐藏，单画布重绘复用）
     this.bubble = null;
     this.bubbleText = null;
-    // 💭 / 💥 标记精灵
+    // 💭 / 💥 标记精灵（默认隐藏，单画布重绘复用）
     this.mark = null;
+    this._markEmoji = null;
   }
 
+  // 动作气泡：单画布重绘复用（同一厨师终身只持有一张 CanvasTexture，换文本只重绘）
   setBubble(text) {
     if (text === this.bubbleText) return;
     this.bubbleText = text;
-    if (this.bubble) {
-      this.bubble.material.map.dispose();
-      this.bubble.material.dispose();
-      this.group.remove(this.bubble);
-      this.bubble = null;
-    }
-    if (text) {
-      this.bubble = makeSprite(bubbleTexture(text), 1.15, 0.43);
+    if (!text) { if (this.bubble) this.bubble.visible = false; return; }
+    if (!this.bubble) {
+      const cv = document.createElement('canvas');
+      cv.width = 256; cv.height = 96;
+      this._bubbleG = cv.getContext('2d');
+      this._bubbleTex = new THREE.CanvasTexture(cv);
+      this._bubbleTex.colorSpace = THREE.SRGBColorSpace;
+      this._bubbleTex.anisotropy = 4;
+      this.bubble = makeSprite(this._bubbleTex, 1.15, 0.43);
       this.bubble.position.y = 1.86;
       this.group.add(this.bubble);
     }
+    drawBubble(this._bubbleG, 256, 96, text);
+    this._bubbleTex.needsUpdate = true;
+    this.bubble.visible = true;
   }
 
+  // 💭 / 💥 标记：同样单画布重绘复用，emoji 不变时零开销
   setMark(emoji) {
-    if (this.mark) {
-      this.mark.material.map.dispose();
-      this.mark.material.dispose();
-      this.group.remove(this.mark);
-      this.mark = null;
-    }
-    if (emoji) {
+    if (emoji === this._markEmoji) return;
+    this._markEmoji = emoji;
+    if (!emoji) { if (this.mark) this.mark.visible = false; return; }
+    if (!this.mark) {
       const cv = document.createElement('canvas');
       cv.width = cv.height = 128;
-      const g = cv.getContext('2d');
-      g.font = '92px sans-serif';
-      g.textAlign = 'center'; g.textBaseline = 'middle';
-      g.fillText(emoji, 64, 70);
-      const tex = new THREE.CanvasTexture(cv);
-      tex.colorSpace = THREE.SRGBColorSpace;
-      this.mark = makeSprite(tex, 0.6, 0.6);
+      this._markG = cv.getContext('2d');
+      this._markTex = new THREE.CanvasTexture(cv);
+      this._markTex.colorSpace = THREE.SRGBColorSpace;
+      this.mark = makeSprite(this._markTex, 0.6, 0.6);
       this.mark.position.y = 1.9;
       this.group.add(this.mark);
     }
+    const g = this._markG;
+    g.clearRect(0, 0, 128, 128);
+    g.font = '92px sans-serif';
+    g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText(emoji, 64, 70);
+    this._markTex.needsUpdate = true;
+    this.mark.visible = true;
   }
 
   // ---------- 行为 API ----------

@@ -27,12 +27,18 @@ if [ "$NODE_MAJOR" -lt 18 ]; then
   exit 1
 fi
 
+# 本地路径克隆时 git 会忽略 --depth 并告警，统一转成 file:// URL
+case "$REPO_URL" in
+  *://*|git@*) CLONE_URL="$REPO_URL" ;;
+  *) CLONE_URL="file://$REPO_URL" ;;
+esac
+
 if [ -d "$INSTALL_DIR/.git" ]; then
   echo "🍳 已有安装，拉取最新代码……"
   git -C "$INSTALL_DIR" pull --ff-only
 else
   echo "🍳 克隆仓库到 $INSTALL_DIR ……"
-  git clone --depth 1 "$REPO_URL" "$INSTALL_DIR"
+  git clone --depth 1 "$CLONE_URL" "$INSTALL_DIR"
 fi
 
 echo "🔗 npm link ……"

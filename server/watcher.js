@@ -180,9 +180,11 @@ export class SessionWatcher {
           try { this.store.processLine(obj, st); } catch { /* 单行错误不阻塞 */ }
         }
       }
-      st.pending = data.subarray(start);
-      // 半截行（写入中）暂存 pending；但若 pending 超过单行上限，
-      // 说明该行异常（或无换行的垃圾数据），丢弃以防内存膨胀
+      // 半截行（写入中）暂存 pending；必须拷贝出来——subarray 会共享底层
+      // 8MB 读缓冲，几十上百个被跟踪文件各钉住一个整块就是几百 MB 驻留
+      // （真实数据冒烟实测 RSS 从 ~60MB 飙到 ~630MB 的元凶）
+      st.pending = start < data.length ? Buffer.from(data.subarray(start)) : Buffer.alloc(0);
+      // 但若 pending 超过单行上限，说明该行异常（或无换行的垃圾数据），丢弃以防内存膨胀
       if (st.pending.length > MAX_LINE_BYTES) st.pending = Buffer.alloc(0);
       if (st.threadId) this.store.touchThread(st.threadId, mtimeMs || Date.now());
     } finally {

@@ -94,8 +94,7 @@ export async function run(ctx) {
     check('「全部」过滤票数 ≥ 当前厨房', allTickets >= curTickets && allTickets > 0,
       '当前 ' + curTickets + ' / 全部 ' + allTickets);
     check('全部模式显示厨房名', !!document.querySelector('#feed .ticket .t-kitchen'));
-    document.getElementById('ff-current').click();
-    await sleep(50);
+    // 终态保持「全部」模式：便于截图目检厨房名小标签与出餐高亮描边（后续断言不依赖流水过滤）
 
     /* 7. 渲染器降级机制：3D 不可用时必须回退 stub 并显示徽章；3D 可用则直接用 3D */
     check('渲染器已创建', !!ctx.renderer);
@@ -105,7 +104,41 @@ export async function run(ctx) {
       usingStub ? 'stub 模式' : '3D 模式'
     );
 
-    /* 8. 控制台零报错（未捕获异常 / 未处理 Promise 拒绝） */
+    /* 8. 音效链路：COSound 已加载、API 完整、顶栏音效按钮可见 */
+    const snd = window.COSound;
+    check('音效模块 COSound 已加载', !!snd);
+    check(
+      'COSound.play / setMuted 为函数',
+      !!snd && typeof snd.play === 'function' && typeof snd.setMuted === 'function'
+    );
+    const btnSound = document.getElementById('btn-sound');
+    check('顶栏音效按钮可见（不再 hidden）', !!btnSound && !btnSound.hidden);
+    check(
+      'COSound.setMuted 生效（muted 往返）',
+      (() => {
+        try {
+          snd.setMuted(true);
+          const on = snd.muted === true;
+          snd.setMuted(false);
+          return on && snd.muted === false;
+        } catch (_) { return false; }
+      })()
+    );
+    check(
+      'COSound.play 静默安全（手势前调用不抛错）',
+      (() => { try { snd.play('serve'); snd.play('chop'); return true; } catch (_) { return false; } })()
+    );
+
+    /* 9. 「已出餐」悬停明细：title 含各厨房出餐数（mock 快照 codex-overcooked / api-server 均有出餐） */
+    const servedBox = document.getElementById('stat-served').closest('.stat');
+    check(
+      '「已出餐」title 明细（各厨房出餐数）',
+      !!servedBox && /各厨房出餐/.test(servedBox.title) &&
+        /codex-overcooked × \d+/.test(servedBox.title) && /api-server × \d+/.test(servedBox.title),
+      servedBox ? servedBox.title.replace(/\n/g, '，') : '无 .stat 容器'
+    );
+
+    /* 10. 控制台零报错（未捕获异常 / 未处理 Promise 拒绝） */
     check('控制台零报错', errors.length === 0, errors.slice(0, 3).join(' ; '));
   } catch (err) {
     check('自测脚本自身执行', false, String((err && err.stack) || err));

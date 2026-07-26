@@ -123,7 +123,25 @@ async function makeFixture(root) {
     line('event_msg', { type: 'task_complete', last_agent_message: '子任务也完成了' }, 31),
   ];
   await fsp.writeFile(child, childLines.join('\n') + '\n');
-  return { sessionsDir: path.join(root, 'sessions'), parent, child };
+
+  // 第二间厨房：与第一间同目录名（不同路径），验证重名自动追加 #短id；
+  // 其子线程模拟真实数据里「thread_spawn 只有 parent_thread_id」的裸子 agent，
+  // 验证小厨师不会被错叫成目录名
+  const parent2 = path.join(dir, 'rollout-2026-07-26T10-02-00-parent2.jsonl');
+  const child2 = path.join(dir, 'rollout-2026-07-26T10-03-00-child2.jsonl');
+  await fsp.writeFile(parent2, [
+    line('session_meta', { id: 'parent-2', cwd: '/tmp/other/alpha-kitchen', originator: 'cli' }, 40),
+    line('event_msg', { type: 'task_started' }, 41),
+    line('event_msg', { type: 'task_complete', last_agent_message: '二号厨房完工' }, 42),
+  ].join('\n') + '\n');
+  await fsp.writeFile(child2, [
+    line('session_meta', {
+      id: 'child-2', cwd: '/tmp/other/alpha-kitchen',
+      source: { subagent: { thread_spawn: { parent_thread_id: 'parent-2' } } },
+    }, 43),
+    line('event_msg', { type: 'task_complete', last_agent_message: '裸子任务完成' }, 44),
+  ].join('\n') + '\n');
+  return { sessionsDir: path.join(root, 'sessions'), parent, child, parent2, child2, root };
 }
 
 // ---------- 主流程 ----------
@@ -145,19 +163,31 @@ async function main() {
     for (let i = 0; i < 40; i++) {
       const r = await get(port1, '/api/snapshot');
       const body = JSON.parse(r.body);
-      if (body.kitchens && body.kitchens.length > 0 && body.kitchens[0].chefs.length >= 2) { snap = body; break; }
+      const k1 = body.kitchens?.find((x) => x.id === 't:parent-1');
+      const k2 = body.kitchens?.find((x) => x.id === 't:parent-2');
+      if (body.kitchens?.length === 2 && k1?.chefs.length >= 2 && k2?.chefs.length >= 2) { snap = body; break; }
       await sleep(250);
     }
-    ok(snap !== null, '回放后 /api/snapshot 能拿到厨房与父子两位厨师');
+    ok(snap !== null, '回放后 /api/snapshot 能拿到两间厨房与各自父子两位厨师');
     if (snap) {
-      const k = snap.kitchens[0];
+      const k = snap.kitchens.find((x) => x.id === 't:parent-1');
+      const k2 = snap.kitchens.find((x) => x.id === 't:parent-2');
       ok(typeof k.id === 'string' && typeof k.name === 'string' && Array.isArray(k.chefs)
         && typeof k.servedCount === 'number' && typeof k.active === 'boolean' && typeof k.lastTs === 'number',
         'Kitchen 结构符合契约（id/name/chefs/servedCount/active/lastTs）');
-      ok(snap.kitchens.length === 1 && k.id === 't:parent-1', '父子线程归并为同一间厨房（t:根线程）');
-      ok(k.name === 'alpha-kitchen', '厨房名取 cwd 目录名');
+      ok(k.chefs.some((c) => c.id === 'child-1') && k2.chefs.some((c) => c.id === 'child-2'),
+        '父子线程归并为同一间厨房（t:根线程）');
+      ok(k.name.startsWith('alpha-kitchen #') && k2.name.startsWith('alpha-kitchen #') && k.name !== k2.name,
+        `重名厨房自动追加 #短id 消歧（实际 ${k.name} / ${k2.name}）`);
       const sub = k.chefs.find((c) => c.id === 'child-1');
       ok(sub && sub.depth === 1 && sub.name === '小炒', '子 agent 厨师层级与昵称正确');
+      const bare = k2.chefs.find((c) => c.id === 'child-2');
+      ok(bare && bare.name !== 'alpha-kitchen' && !bare.name.startsWith('alpha-kitchen'),
+        `裸子 agent（无昵称/工种）不叫目录名（实际 ${bare?.name}）`);
+      const names1 = k.chefs.map((c) => c.name);
+      const names2 = k2.chefs.map((c) => c.name);
+      ok(new Set(names1).size === names1.length && new Set(names2).size === names2.length,
+        '同一厨房内厨师名不撞车');
       const chef0 = k.chefs[0];
       ok(typeof chef0.color === 'string' && /^#[0-9a-f]{6}$/i.test(chef0.color), '厨师有 hex 颜色');
       ok(k.servedCount >= 2, `父子各完成一单 → servedCount≥2（实际 ${k.servedCount}）`);
@@ -178,7 +208,37 @@ async function main() {
     await fsp.appendFile(parent, 'garbage bytes !@#$%\n{"broken":\n');
     await sleep(400);
     const r2 = await get(port1, '/api/snapshot');
-    ok(r2.status === 200 && JSON.parse(r2.body).kitchens.length === 1, '灌入垃圾数据后服务仍正常响应');
+    ok(r2.status === 200 && JSON.parse(r2.body).kitchens.length === 2, '灌入垃圾数据后服务仍正常响应');
+
+    console.log('▶ 用例 2b：出餐语义（菜名剥离 markdown / 跳过 JSON 行）');
+    // 加粗标题 → 菜名应剥离 ** ；纯 JSON 输出 → 应走线程标题/厨房名兜底
+    await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '**修好断线重连**\n细节略' }, 45) + '\n');
+    const dish1 = await sse.waitFor((e) => e.type === 'dish_served', 9000, 'dish_served(加粗标题)').catch(() => null);
+    ok(dish1 && dish1.dish.name === '修好断线重连', `菜名剥离 markdown 加粗（实际 ${dish1?.dish.name}）`);
+    await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '{"outcome":"allow"}' }, 46) + '\n');
+    const dish2 = await sse.waitFor((e) => e.type === 'dish_served' && e.dish.ts > dish1.dish.ts, 9000, 'dish_served(JSON 兜底)').catch(() => null);
+    ok(dish2 && !dish2.dish.name.startsWith('{') && !dish2.dish.name.startsWith('```') && dish2.dish.name.length >= 2,
+      `JSON 输出的菜名走兜底而非裸露 JSON（实际 ${dish2?.dish.name}）`);
+
+    console.log('▶ 用例 2c：session_index 迟到后厨房改用会话标题');
+    // 标题索引放在 sessions 目录旁（与 watcher 的 resolve 规则一致）
+    await fsp.writeFile(path.join(root, 'session_index.jsonl'),
+      JSON.stringify({ id: 'parent-1', thread_name: '快照接口开发', updated_at: '2026-07-26T11:00:00Z' }) + '\n');
+    let renamed = null;
+    for (let i = 0; i < 24; i++) {
+      const body = JSON.parse((await get(port1, '/api/snapshot')).body);
+      const k1 = body.kitchens.find((x) => x.id === 't:parent-1');
+      const k2 = body.kitchens.find((x) => x.id === 't:parent-2');
+      if (k1?.name === '快照接口开发') { renamed = { k1, k2 }; break; }
+      await sleep(500);
+    }
+    ok(renamed !== null, 'session_index 写入后厨房改名为会话标题');
+    ok(renamed && renamed.k2.name === 'alpha-kitchen',
+      `重名组仅剩一间后自动摘掉 #短id 后缀（实际 ${renamed?.k2.name}）`);
+    // 兜底菜名此时应取线程标题
+    await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '' }, 47) + '\n');
+    const dish3 = await sse.waitFor((e) => e.type === 'dish_served' && e.dish.ts > dish2.dish.ts, 9000, 'dish_served(空消息兜底)').catch(() => null);
+    ok(dish3 && dish3.dish.name === '快照接口开发', `空消息时菜名兜底为线程标题（实际 ${dish3?.dish.name}）`);
     sse.close();
 
     console.log('▶ 用例 3：demo 模式');

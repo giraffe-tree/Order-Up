@@ -491,10 +491,24 @@ button { font-family: inherit; cursor: pointer; }
 }
 
 .ticket .t-kitchen {
-  margin-top: 3px;
-  font-size: 11px;
-  font-weight: 800;
-  color: var(--stone);
+  flex: 0 0 auto;
+  max-width: 42%;
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--wood);
+  border: 1.5px solid var(--ink);
+  border-radius: 6px;
+  padding: 0 5px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 出餐票卡：绿色高亮描边 + 柔光，出餐更有仪式感 */
+.ticket.kind-serve {
+  box-shadow: inset 0 0 0 3px var(--green);
+  filter: drop-shadow(0 3px 0 var(--ink)) drop-shadow(0 0 6px rgba(88, 178, 76, 0.6));
 }
 
 .feed-toggle { display: none; }
@@ -779,6 +793,17 @@ button { font-family: inherit; cursor: pointer; }
   font-weight: 700;
   line-height: 1.7;
   color: var(--wood);
+}
+.guide-sound {
+  margin-top: 14px;
+  font-size: 12.5px;
+  font-weight: 800;
+  line-height: 1.6;
+  color: var(--wood);
+  background: rgba(254, 196, 87, 0.35);
+  border: 2px dashed var(--wood-light);
+  border-radius: 10px;
+  padding: 7px 12px;
 }
 .guide-list, .guide-keys {
   list-style: none;

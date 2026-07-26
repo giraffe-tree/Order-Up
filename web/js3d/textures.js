@@ -53,10 +53,9 @@ export function nameTexture(name, colorHex) {
   return toTexture(c);
 }
 
-// 动作气泡（白底圆角 + 小尾巴）
-export function bubbleTexture(text) {
-  const w = 256, h = 96;
-  const [c, g] = makeCanvas(w, h);
+// 把气泡画进既有 2D 上下文（对象池复用：同一 canvas 反复重绘，不再每次新建纹理）
+export function drawBubble(g, w, h, text) {
+  g.clearRect(0, 0, w, h);
   g.fillStyle = '#FFFDF6';
   g.beginPath(); g.roundRect(8, 6, w - 16, h - 28, 24); g.fill();
   g.strokeStyle = '#2A2138';
@@ -73,18 +72,34 @@ export function bubbleTexture(text) {
   g.stroke();
   g.fillStyle = '#FFFDF6';
   g.fillRect(w / 2 - 13, h - 30, 26, 8);
-  g.font = `bold 34px ${FONT}`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
   g.fillStyle = '#2A2138';
   const label = text.length > 6 ? text.slice(0, 6) : text;
+  g.font = `bold 34px ${FONT}`;
   g.fillText(label, w / 2, (h - 24) / 2 + 2);
+}
+
+// 动作气泡（白底圆角 + 小尾巴）
+export function bubbleTexture(text) {
+  const w = 256, h = 96;
+  const [c, g] = makeCanvas(w, h);
+  drawBubble(g, w, h, text);
   return toTexture(c);
 }
 
-// 木牌（歇业中 / 后厨+N / 厨房名）
-export function plankTexture(text, { w = 320, h = 96, fontSize = 44, bg = '#7A5230', fg = '#F5EBD7' } = {}) {
-  const [c, g] = makeCanvas(w, h);
+// 自适应字号：文字超过 maxChars 后按比例缩字号，最长 maxLen 字（超出截断）
+function fitFont(g, text, fontSize, maxChars, maxLen) {
+  const label = text.length > maxLen ? text.slice(0, maxLen) : text;
+  const size = label.length > maxChars ? Math.max(16, Math.floor(fontSize * maxChars / label.length)) : fontSize;
+  g.font = `bold ${size}px ${FONT}`;
+  return label;
+}
+
+// 把木牌画进既有 2D 上下文（对象池复用：同一 canvas 反复重绘，不再每次新建纹理）
+// maxChars/maxLen 默认不限（保持旧标牌行为）；popup 池传入明确上限实现缩字号与截断
+export function drawPlank(g, w, h, text, { fontSize = 44, bg = '#7A5230', fg = '#F5EBD7', maxChars = Infinity, maxLen = Infinity } = {}) {
+  g.clearRect(0, 0, w, h);
   g.fillStyle = bg;
   g.fillRect(0, 0, w, h);
   // 木纹深色边框
@@ -95,14 +110,20 @@ export function plankTexture(text, { w = 320, h = 96, fontSize = 44, bg = '#7A52
   g.lineWidth = 3;
   g.beginPath(); g.moveTo(10, h * 0.35); g.lineTo(w - 10, h * 0.35); g.stroke();
   g.beginPath(); g.moveTo(10, h * 0.7); g.lineTo(w - 10, h * 0.7); g.stroke();
-  g.font = `bold ${fontSize}px ${FONT}`;
   g.textAlign = 'center';
   g.textBaseline = 'middle';
+  const label = fitFont(g, text, fontSize, maxChars, maxLen);
   g.lineWidth = 6;
   g.strokeStyle = '#2A2138';
-  g.strokeText(text, w / 2, h / 2 + 2);
+  g.strokeText(label, w / 2, h / 2 + 2);
   g.fillStyle = fg;
-  g.fillText(text, w / 2, h / 2 + 2);
+  g.fillText(label, w / 2, h / 2 + 2);
+}
+
+// 木牌（歇业中 / 后厨+N / 厨房名）
+export function plankTexture(text, { w = 320, h = 96, fontSize = 44, bg = '#7A5230', fg = '#F5EBD7' } = {}) {
+  const [c, g] = makeCanvas(w, h);
+  drawPlank(g, w, h, text, { fontSize, bg, fg });
   return toTexture(c);
 }
 

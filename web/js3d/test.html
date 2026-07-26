@@ -40,6 +40,8 @@ const qs = new URLSearchParams(location.search);
 const SHOT = qs.get('shot') === '1'; // 截图模式：时间轴压缩，最终停在繁忙状态
 const CLOSED = qs.get('closed') === '1'; // 歇业模式：active=false 压暗 + 歇业中木牌
 const CROWD = qs.get('crowd') === '1';   // 超员模式：20 厨师验证同屏上限 12 + 后厨木牌
+const PERF = qs.get('perf') === '1';     // 性能模式：20 厨师满场随机动作跑 300 帧，平均帧耗时写 title
+const REPORT = qs.get('report') === '1'; // perf 跑完后 fetch 上报给 devtool-server（无头实测用）
 
 // ---- 内联 mock：6 厨师 ----
 const kitchen = { id: 'k1', name: '测试厨房', cwd: '/tmp/demo', chefs: [], servedCount: 0, active: true, lastTs: Date.now() };
@@ -53,7 +55,7 @@ const chefs = [
 ];
 kitchen.chefs = chefs;
 if (CLOSED) kitchen.active = false;
-if (CROWD) {
+if (CROWD || PERF) {
   const extra = ['#E0473C', '#447EE0', '#58B24C', '#F2C230', '#9B59B6', '#16A2A2', '#E67E22'];
   for (let i = 7; i <= 20; i++) {
     chefs.push({ id: 'c' + i, name: '厨' + i, role: null, depth: 1, status: 'idle', color: extra[i % 7], lastAction: null });
@@ -99,9 +101,50 @@ const LOOP_MS = 10000;
 function schedule(base) {
   for (const [t, fn] of steps) setTimeout(fn, base + t);
 }
-schedule(0);
-if (!SHOT) setInterval(() => schedule(LOOP_MS), LOOP_MS); // 人工查看时循环播放
-else setTimeout(() => log('截图基准帧：多厨师同时干活中'), 9300); // 截图模式停在繁忙帧
+if (!PERF) {
+  schedule(0);
+  if (!SHOT) setInterval(() => schedule(LOOP_MS), LOOP_MS); // 人工查看时循环播放
+  else setTimeout(() => log('截图基准帧：多厨师同时干活中'), 9300); // 截图模式停在繁忙帧
+}
+
+// ---- perf 模式：20 厨师满场随机动作，macrotask 驱动 300 帧（update+render+gl.finish 计时）----
+// 注意：无头 Chrome --virtual-time-budget 会虚拟化 performance.now()（rAF 不触发、任务内时钟冻结），
+// 所以本模式必须在真实时间下运行：devtool-server + report=1 上报，或人工打开看 title。
+if (PERF) {
+  cancelAnimationFrame(r._raf); // 接管主循环：step 只推模拟，渲染与计时由这里控制
+  const KINDS = [['read', '看菜谱'], ['edit', '切菜炒菜'], ['exec', '跑命令'], ['search', '订食材'], ['tool', '高压锅'], ['think', '想菜单'], ['speak', '喊话']];
+  const ids = chefs.map((c) => c.id);
+  for (let i = 0; i < 200; i++) r.step(0.05); // 快进入场动画，全部厨师就位
+  const gl = r.renderer.getContext();
+  const times = [];
+  const FRAMES = 300;
+  let frame = 0;
+  const runChunk = () => {
+    for (let k = 0; k < 5 && frame < FRAMES; k++, frame++) { // 每个 macrotask 5 帧，防长任务
+      if (frame % 18 === 0) { // 随机派活
+        for (let j = 0; j < 4; j++) {
+          const [kind, label] = KINDS[(Math.random() * KINDS.length) | 0];
+          r.chefAction(ids[(Math.random() * ids.length) | 0], { kind, label, detail: 'perf', ts: Date.now() });
+        }
+      }
+      if (frame % 90 === 45) r.dishServed({ name: '番茄浓汤配时蔬', by: chefs[(Math.random() * chefs.length) | 0].name, ts: Date.now() });
+      if (frame % 120 === 60) r.chefAction(ids[(Math.random() * ids.length) | 0], { kind: 'burn', label: '糊了', ts: Date.now() });
+      const t0 = performance.now();
+      r.step(1 / 60);
+      r.renderer.render(r.scene, r.camera);
+      gl.finish(); // SwiftShader 软渲染：强制等光栅完成，测真实整帧成本
+      times.push(performance.now() - t0);
+    }
+    if (frame < FRAMES) { setTimeout(runChunk, 0); return; }
+    const warm = times.slice(30); // 去掉前 30 帧预热
+    const avg = warm.reduce((s, v) => s + v, 0) / warm.length;
+    const max = Math.max(...warm);
+    document.title = `PERF avg=${avg.toFixed(1)}ms`;
+    log(`${document.title} max=${max.toFixed(1)}ms（300 帧 / 20 厨师随机动作，含 gl.finish）`);
+    if (REPORT) fetch(`/__perf?avg=${avg.toFixed(2)}&max=${max.toFixed(2)}&frames=${FRAMES}&errs=${window.__errs.length}`).catch(() => {});
+  };
+  setTimeout(runChunk, 300); // 等首屏纹理/着色器就绪
+}
 
 if (SHOT) setTimeout(() => {
   document.title = JSON.stringify({

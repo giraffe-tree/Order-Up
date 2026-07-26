@@ -3,11 +3,13 @@
 // 额外特效：出餐飞菜 + 彩纸星星庆祝、糊了浓烟火星、电话台声波圈（全部走对象池，无每帧分配）
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL } from './palette.js';
-import { plankTexture } from './textures.js';
+import { drawPlank } from './textures.js';
 
 const MAX_PARTICLES = 420;
 const MAX_STARS = 12;   // 出餐庆祝星星池
 const MAX_RINGS = 8;    // 电话声波圈池
+const MAX_POPUPS = 6;   // 弹出文字精灵池（canvas 重绘复用，不再每次新建纹理）
+const MAX_FLYERS = 4;   // 飞菜池（盘子+菜品网格复用）
 
 const KINDS = {
   chop:   { color: 0xFFFFFF, grav: -6.0, drag: 0.92, life: 0.55, size: 0.07, spin: 8 },
@@ -105,6 +107,43 @@ export class FX {
       scene.add(m);
       this._ringPool.push(m);
     }
+
+    // 弹出文字精灵池：固定 6 个，各自持有持久 canvas + CanvasTexture，
+    // 每次弹出只重绘 canvas（tex.needsUpdate），零纹理分配/销毁
+    this._popupAll = [];
+    this._popupPool = [];
+    for (let i = 0; i < MAX_POPUPS; i++) {
+      const cv = document.createElement('canvas');
+      cv.width = 360; cv.height = 96;
+      const g2d = cv.getContext('2d');
+      const tex = new THREE.CanvasTexture(cv);
+      tex.colorSpace = THREE.SRGBColorSpace;
+      tex.anisotropy = 4;
+      const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
+      const s = new THREE.Sprite(mat);
+      s.scale.set(1.8, 0.48, 1);
+      s.visible = false;
+      scene.add(s);
+      const entry = { s, tex, cv, g: g2d };
+      this._popupAll.push(entry);
+      this._popupPool.push(entry);
+    }
+
+    // 飞菜池：盘子+菜品网格复用（出餐高频时不新建 Group/Mesh）
+    this._flyerAll = [];
+    this._flyerPool = [];
+    for (let i = 0; i < MAX_FLYERS; i++) {
+      const g = new THREE.Group();
+      const plate = new THREE.Mesh(this._dishGeo, this._dishMat);
+      const food = new THREE.Mesh(this._foodGeo, this._foodMat);
+      food.position.y = 0.08;
+      g.add(plate, food);
+      g.visible = false;
+      scene.add(g);
+      const entry = { g, food };
+      this._flyerAll.push(entry);
+      this._flyerPool.push(entry);
+    }
   }
 
   spawn(kind, x, y, z, vx = 0, vy = 0, vz = 0, scale = 1) {
@@ -177,33 +216,45 @@ export class FX {
     }
   }
 
-  // 出餐：菜品从出餐口飞出 + 「出餐 +1」弹出 + 彩纸星星
-  dishServed(from) {
-    const g = new THREE.Group();
-    const plate = new THREE.Mesh(this._dishGeo, this._dishMat);
-    const food = new THREE.Mesh(this._foodGeo, Math.random() > 0.5 ? this._foodMat : this._foodMat2);
-    food.position.y = 0.08;
-    food.rotation.y = Math.random();
-    g.add(plate, food);
-    g.position.copy(from);
-    this.scene.add(g);
-    this.flyers.push({ g, t: 0, life: 1.25, spin: 7 + Math.random() * 4 });
-    this.popup('出餐 +1', new THREE.Vector3(from.x, from.y + 0.5, from.z + 0.3), '#D94F3D');
-    this.celebrate(new THREE.Vector3(from.x, from.y + 0.2, from.z + 0.2));
+  // 出餐仪式：热气腾腾的菜从厨师处抛物线飞向出餐口窗口，
+  // 落点弹出菜名（≤24 字，超长自动缩字号）+ 彩纸星星庆祝。飞菜/弹字全走对象池。
+  dishServed(from, to, name) {
+    const entry = this._flyerPool.pop();
+    if (!entry) return; // 池满：跳过本次飞行（高频出餐不堆积、不分配）
+    entry.food.material = Math.random() > 0.5 ? this._foodMat : this._foodMat2;
+    entry.food.rotation.y = Math.random();
+    entry.g.position.copy(from);
+    entry.g.rotation.set(0, 0, 0);
+    entry.g.scale.setScalar(1);
+    entry.g.visible = true;
+    const dest = to || { x: from.x, y: from.y, z: from.z - 3 };
+    const dist = Math.hypot(dest.x - from.x, dest.z - from.z);
+    this.flyers.push({
+      f: entry, t: 0, life: 1.1,
+      sx: from.x, sy: from.y, sz: from.z,
+      ex: dest.x, ey: dest.y, ez: dest.z,
+      arc: 0.7 + Math.min(1.3, dist * 0.16), // 抛物线拱高随距离
+      spin: 7 + Math.random() * 4,
+      steamAcc: 0,
+      name: name || '神秘料理',
+    });
   }
 
-  popup(text, pos, color = '#D94F3D') {
-    const tex = plankTexture(text, { w: 300, h: 90, fontSize: 46, bg: '#F5EBD7', fg: color });
-    this._popupWith(tex, pos);
-  }
-
-  _popupWith(tex, pos) {
-    const mat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false });
-    const s = new THREE.Sprite(mat);
-    s.scale.set(1.5, 0.45, 1);
-    s.position.copy(pos);
-    this.scene.add(s);
-    this.popups.push({ s, t: 0, life: 1.4 });
+  // 弹出文字（对象池）：重绘池内精灵的 canvas 后上屏；池满时回收最老在播弹字
+  popup(text, pos, color = '#D94F3D', life = 1.4) {
+    let entry = this._popupPool.pop();
+    if (!entry) {
+      const oldest = this.popups.shift();
+      if (!oldest) return;
+      entry = oldest.p;
+    }
+    drawPlank(entry.g, entry.cv.width, entry.cv.height, text,
+      { fontSize: 44, bg: '#F5EBD7', fg: color, maxChars: 7, maxLen: 24 });
+    entry.tex.needsUpdate = true;
+    entry.s.position.copy(pos);
+    entry.s.material.opacity = 1;
+    entry.s.visible = true;
+    this.popups.push({ p: entry, t: 0, life });
   }
 
   update(dt) {
@@ -282,49 +333,62 @@ export class FX {
       r.m.scale.setScalar(0.3 + u * 2.6);
       r.m.material.opacity = 0.65 * (1 - u);
     }
-    // 飞菜
+    // 飞菜：厨师处 → 出餐口抛物线，全程蒸汽尾迹；落点弹菜名 + 彩纸星星
     for (let i = this.flyers.length - 1; i >= 0; i--) {
-      const f = this.flyers[i];
-      f.t += dt;
-      if (f.t >= f.life) {
-        this.scene.remove(f.g);
+      const fl = this.flyers[i];
+      fl.t += dt;
+      const g = fl.f.g;
+      if (fl.t >= fl.life) {
+        g.visible = false;
+        this._flyerPool.push(fl.f);
         this.flyers.splice(i, 1);
+        // 落点：菜名弹字（≤24 字）+ 庆祝彩纸星星
+        this.popup(fl.name, new THREE.Vector3(fl.ex, fl.ey + 0.55, fl.ez + 0.35), '#D94F3D');
+        this.celebrate(new THREE.Vector3(fl.ex, fl.ey + 0.15, fl.ez + 0.25));
         continue;
       }
-      const u = f.t / f.life;
-      f.g.position.z -= dt * 3.2;          // 飞进窗口（北）
-      f.g.position.y += dt * (2.2 - u * 2.6); // 先扬后落
-      f.g.rotation.y += f.spin * dt;
-      f.g.scale.setScalar(1 - u * 0.55);
+      const u = fl.t / fl.life;
+      g.position.x = fl.sx + (fl.ex - fl.sx) * u;
+      g.position.z = fl.sz + (fl.ez - fl.sz) * u;
+      g.position.y = fl.sy + (fl.ey - fl.sy) * u + Math.sin(u * Math.PI) * fl.arc;
+      g.rotation.y += fl.spin * dt;
+      // 热气腾腾：飞行沿途冒蒸汽
+      fl.steamAcc += dt;
+      if (fl.steamAcc > 0.05) {
+        fl.steamAcc = 0;
+        this.spawn('steam',
+          g.position.x + (Math.random() - 0.5) * 0.1, g.position.y + 0.06, g.position.z + (Math.random() - 0.5) * 0.1,
+          0, 0.6, 0, 0.9);
+      }
     }
-    // 弹出字
+    // 弹出字（池化精灵：上升 + 尾段淡出，结束归还池）
     for (let i = this.popups.length - 1; i >= 0; i--) {
       const p = this.popups[i];
       p.t += dt;
       if (p.t >= p.life) {
-        p.s.material.map.dispose();
-        p.s.material.dispose();
-        this.scene.remove(p.s);
+        p.p.s.visible = false;
+        this._popupPool.push(p.p);
         this.popups.splice(i, 1);
         continue;
       }
       const u = p.t / p.life;
-      p.s.position.y += dt * 0.9;
-      p.s.material.opacity = u < 0.7 ? 1 : 1 - (u - 0.7) / 0.3;
+      p.p.s.position.y += dt * 0.9;
+      p.p.s.material.opacity = u < 0.7 ? 1 : 1 - (u - 0.7) / 0.3;
     }
   }
 
   dispose() {
     for (const m of this.pool) this.scene.remove(m);
     for (const p of this.live) this.scene.remove(p.m);
-    for (const f of this.flyers) this.scene.remove(f.g);
-    for (const p of this.popups) { p.s.material.map.dispose(); p.s.material.dispose(); this.scene.remove(p.s); }
+    for (const e of this._flyerAll) this.scene.remove(e.g);
+    for (const e of this._popupAll) { e.tex.dispose(); e.s.material.dispose(); this.scene.remove(e.s); }
     for (const m of this._starPool) this.scene.remove(m);
     for (const st of this._starLive) this.scene.remove(st.m);
     for (const m of this._ringPool) { m.material.dispose(); this.scene.remove(m); }
     for (const r of this._ringLive) { r.m.material.dispose(); this.scene.remove(r.m); }
     this.pool = []; this.live = []; this.flyers = []; this.popups = []; this.emitters = [];
     this._starPool = []; this._starLive = []; this._ringPool = []; this._ringLive = [];
+    this._flyerAll = []; this._flyerPool = []; this._popupAll = []; this._popupPool = [];
     this.geo.dispose();
     for (const k in this.mats) this.mats[k].dispose();
     for (const k in this._multi) for (const mt of this._multi[k]) mt.dispose();

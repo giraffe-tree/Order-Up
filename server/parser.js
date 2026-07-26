@@ -39,13 +39,25 @@ function extractCmd(input) {
   try { return JSON.parse('"' + m[1] + '"'); } catch { return m[1]; }
 }
 
-// 从 apply_patch 文本中提取涉及文件
-function patchFiles(text) {
-  const files = [];
-  const re = /\*\*\*\s*(?:Update|Add|Delete)\s+File:\s*(.+)/g;
-  let m;
-  while ((m = re.exec(String(text ?? '')))) files.push(base(m[1].trim()));
-  return files;
+// 从最后一条 agent 消息里提取有信息量的菜名：
+// 跳过代码围栏 / JSON 输出行，剥离 markdown 标题、加粗、列表与链接语法；
+// 取不到就返回 ''，由调用方走「线程标题 → 厨房名 → 第 N 道菜」兜底链。
+// （真实数据抽样：约 1/3 的 task_complete 首行是 **加粗标题** 或 ``` 围栏 / {"outcome":...} 之类的 JSON）
+export function dishNameFrom(message) {
+  const lines = String(message ?? '').split('\n').map((l) => l.trim()).filter(Boolean);
+  for (let line of lines) {
+    if (line.startsWith('```')) continue;          // 代码围栏
+    if (/^[{[]/.test(line)) continue;              // JSON / 数组输出
+    line = line
+      .replace(/^#{1,6}\s+/, '')                   // ## 标题
+      .replace(/^[-*+]\s+/, '')                    // 列表符
+      .replace(/\[([^\]]+)\]\([^)]*\)/g, '$1')     // [文字](链接) → 文字
+      .replace(/^\*\*(.+?)\*\*\.?$/, '$1')         // **整行加粗**
+      .replace(/[*_]/g, '')                        // 残余强调符
+      .trim();
+    if (line.length >= 2) return trunc(line, 24);
+  }
+  return '';
 }
 
 // 读文件类命令（cat/sed/rg 等）归为 read，其余归 exec
@@ -72,10 +84,9 @@ export class KitchenStore {
       if (!k.id.startsWith('t:')) continue;
       const rootId = k.id.slice(2);
       const real = this.threadNames.get(rootId);
-      if (real && k.name !== real) {
-        k.name = real;
+      if (real && k.baseName !== real) {
+        this._setBaseName(k, real);
         k.named = true;
-        this.emit({ type: 'kitchen_updated', kitchen: this._pubKitchen(k) });
       }
     }
   }
@@ -86,15 +97,38 @@ export class KitchenStore {
     let k = this.kitchens.get(id);
     if (!k) {
       k = {
-        id, name: name || base(cwd) || id, cwd: cwd || '',
+        id, name: name || base(cwd) || id, baseName: name || base(cwd) || id, cwd: cwd || '',
         chefs: [], servedCount: 0, active: true, lastTs: 0, lastWrite: 0,
       };
       this.kitchens.set(id, k);
+      this._resolveNames(k.baseName); // 新厨房可能与既有厨房重名
     } else {
-      if (name) k.name = name;
-      if (cwd) { k.cwd = cwd; if (!name && !k.named) k.name = base(cwd); }
+      if (name) this._setBaseName(k, name);
+      if (cwd) { k.cwd = cwd; if (!name && !k.named) this._setBaseName(k, base(cwd)); }
     }
     return k;
+  }
+
+  // 重名消歧：baseName 是未加后缀的原始名；同一 baseName 有多间厨房时
+  // 自动追加「 #短id」（README 承诺的行为）。名字变化时发 kitchen_updated。
+  _setBaseName(k, bn) {
+    if (!bn || k.baseName === bn) return;
+    const old = k.baseName;
+    k.baseName = bn;
+    if (old) this._resolveNames(old); // 旧组可能只剩一间，应摘掉后缀
+    this._resolveNames(bn);
+  }
+
+  _resolveNames(bn) {
+    const group = [...this.kitchens.values()].filter((x) => x.baseName === bn);
+    for (const x of group) {
+      const short = x.id.replace(/^[a-z]+:/i, '').slice(-4);
+      const want = group.length > 1 ? `${bn} #${short}` : bn;
+      if (x.name !== want) {
+        x.name = want;
+        this.emit({ type: 'kitchen_updated', kitchen: this._pubKitchen(x) });
+      }
+    }
   }
 
   upsertChef(kitchenId, { id, name, role = null, depth = 0 }, { live = true } = {}) {
@@ -104,7 +138,7 @@ export class KitchenStore {
     let isNew = false;
     if (!chef) {
       chef = {
-        id, name: name || '厨师 ' + String(id).slice(-4), role,
+        id, name: this._dedupeChefName(k, name || '厨师 ' + String(id).slice(-4), id), role,
         depth, status: 'idle', color: colorFor(id), lastAction: null,
       };
       k.chefs.push(chef);
@@ -115,11 +149,19 @@ export class KitchenStore {
         this.action(kitchenId, id, 'join', '新厨师入职', `${chef.name} 系上围裙报到`, Date.now());
       }
     } else {
-      if (name) chef.name = name;
+      if (name) chef.name = this._dedupeChefName(k, name, id);
       if (role !== undefined && role !== null) chef.role = role;
       if (typeof depth === 'number') chef.depth = depth;
     }
     return { chef, isNew };
+  }
+
+  // 同一厨房内厨师名不应撞车（真实数据里子线程常缺昵称，曾出现 5 个厨师同名），
+  // 撞名时追加「 #短id」区分
+  _dedupeChefName(k, name, selfId) {
+    if (!name) return name;
+    if (!k.chefs.some((c) => c.id !== selfId && c.name === name)) return name;
+    return `${name} #${String(selfId).slice(-4)}`;
   }
 
   action(kitchenId, chefId, kind, label, detail, ts) {
@@ -229,16 +271,20 @@ export class KitchenStore {
       k.cwd = cwd;
       // 根线程权威命名：优先 session_index 里的会话标题，拿不到再用目录名；已命名不降级
       const real = this.threadNames.get(threadId);
-      if (real) { k.name = real; k.named = true; }
-      else if (!k.named) k.name = base(cwd);
+      if (real) { this._setBaseName(k, real); k.named = true; }
+      else if (!k.named) this._setBaseName(k, base(cwd));
     }
     this.threadKitchen.set(threadId, kitchenId);
     const depth = spawn?.depth ?? 0;
-    // 命名兜底链：昵称 → 根线程用会话标题/目录名 → 子线程用工种名（agent_path 末段）→ 短 id
+    // 命名兜底链（按是否有父线程区分主厨/小厨师，而不是 spawn.depth——
+    // 真实数据里大量子线程的 thread_spawn 只有 parent_thread_id，depth 缺省）：
+    // 主厨：会话标题 → 目录名 → 主厨 #id；小厨师：昵称 → 工种(agent_path) →
+    // 会话标题 → 工种角色(agent_role) → 厨师 #id。绝不把子 agent 叫成厨房目录名。
+    const isChild = !!parent;
     const name = p.agent_nickname || spawn?.agent_nickname ||
-      (depth === 0
-        ? (this.threadNames.get(threadId) || (cwd ? base(cwd) : '') || '主厨 ' + String(threadId).slice(-4))
-        : (base(spawn?.agent_path) || '厨师 ' + String(threadId).slice(-4)));
+      (isChild
+        ? (base(spawn?.agent_path) || this.threadNames.get(threadId) || spawn?.agent_role || '厨师 ' + String(threadId).slice(-4))
+        : (this.threadNames.get(threadId) || (cwd ? base(cwd) : '') || '主厨 ' + String(threadId).slice(-4)));
     const role = spawn?.agent_role ?? null;
     this.upsertChef(kitchenId, { id: threadId, name, role, depth }, { live });
   }
@@ -299,8 +345,9 @@ export class KitchenStore {
         this._act(p, ts, threadId, live, 'think', '开工', '接到新订单，开始干活');
         break;
       case 'task_complete': {
-        // 菜名兜底链：最后一条消息首行 → 线程标题 → 厨房名 → 第 N 道菜
-        const first = trunc(String(p.last_agent_message || '').split('\n')[0], 24);
+        // 菜名兜底链：最后一条消息里的有效标题行（剥离 markdown、跳过 JSON/围栏）
+        // → 线程标题 → 厨房名 → 第 N 道菜
+        const first = dishNameFrom(p.last_agent_message);
         const fallback = this.threadNames.get(threadId) || '';
         this._act(p, ts, threadId, live, 'serve', '出餐', first || fallback || '任务完成，上菜');
         if (live) {

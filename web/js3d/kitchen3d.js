@@ -162,8 +162,22 @@ export class KitchenRenderer {
 
   dishServed(dish) {
     if (!this.built) return;
-    // 菜品从出餐口窗口飞出 + 「出餐 +1」
-    this.fx.dishServed(new THREE.Vector3(0, 1.1, -(GH - 1) / 2 + 0.3));
+    // 出餐仪式：热气腾腾的菜从出餐厨师处抛物线飞向出餐口窗口，落点弹菜名
+    const winZ = -(GH - 1) / 2 - 0.66;                 // 北墙内立面
+    const to = new THREE.Vector3(0, 1.15, winZ + 0.3); // 窗台上（出餐口窗洞下沿）
+    let from = null;
+    const by = dish && dish.by;
+    if (by) {
+      for (const [, c] of this.chefs) {
+        if (c.visible && c.actor && (c.data.name === by || c.data.id === by)) {
+          const p = c.actor.group.position;
+          from = new THREE.Vector3(p.x, 1.25, p.z);    // 从厨师手上起飞
+          break;
+        }
+      }
+    }
+    if (!from) from = new THREE.Vector3(0, 1.3, -(GH - 1) / 2 + 0.6); // 找不到厨师：从出餐台起飞
+    this.fx.dishServed(from, to, dish && dish.name);
     if (this.kitchenData) this.kitchenData.servedCount = (this.kitchenData.servedCount || 0) + 1;
   }
 
