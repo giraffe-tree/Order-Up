@@ -48,13 +48,15 @@ export const LAYOUT = [
   { ix: 1, iz: 8, kind: 'counter' }, { ix: 2, iz: 8, kind: 'counter' },
   { ix: 9, iz: 8, kind: 'counter' }, { ix: 10, iz: 8, kind: 'counter' },
   // 中央岛台 (x=4..7, z=3..4)
-  { ix: 4, iz: 3, kind: 'board', icon: '📖', face: 'n' },
-  { ix: 5, iz: 3, kind: 'stove', icon: '🔥', face: 'n', stoveId: 'A' },
-  { ix: 6, iz: 3, kind: 'stove', icon: '🔥', face: 'n', stoveId: 'B' },
+  // 岛台 2 格深，站位必须在岛外走道：北排(z=3) face 's' → 厨师站 z=2 北走道朝南操作；
+  // 南排(z=4) face 'n' → 厨师站 z=5 南走道朝北操作（否则站位落在岛内台面上，模型与灶台重合）
+  { ix: 4, iz: 3, kind: 'board', icon: '📖', face: 's' },
+  { ix: 5, iz: 3, kind: 'stove', icon: '🔥', face: 's', stoveId: 'A' },
+  { ix: 6, iz: 3, kind: 'stove', icon: '🔥', face: 's', stoveId: 'B' },
   { ix: 7, iz: 3, kind: 'wok', icon: '🔪', face: 'w' },
-  { ix: 4, iz: 4, kind: 'pressure', icon: '⚡', face: 's' },
+  { ix: 4, iz: 4, kind: 'pressure', icon: '⚡', face: 'n' },
   { ix: 5, iz: 4, kind: 'plates' },
-  { ix: 6, iz: 4, kind: 'crate', icon: '🍚', face: 's' },
+  { ix: 6, iz: 4, kind: 'crate', icon: '🍚', face: 'n' },
   { ix: 7, iz: 4, kind: 'counter' },
 ];
 
