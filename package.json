@@ -1,0 +1,25 @@
+{
+  "name": "codex-kitchen",
+  "version": "0.1.0",
+  "description": "把本机 Codex CLI 会话实时可视化成胡闹厨房",
+  "type": "module",
+  "bin": {
+    "codex-kitchen": "bin/codex-kitchen.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bin/codex-kitchen.js",
+    "dev": "node bin/codex-kitchen.js --demo",
+    "demo": "node bin/codex-kitchen.js --demo"
+  },
+  "license": "MIT",
+  "files": [
+    "bin",
+    "server",
+    "web",
+    "install.sh",
+    "README.md"
+  ]
+}
