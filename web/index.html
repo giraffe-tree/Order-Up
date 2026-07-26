@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Codex Overcooked 🍳</title>
+<link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+<header class="topbar">
+  <h1>Codex Overcooked 🍳</h1>
+  <span id="conn" class="conn">连接中…</span>
+  <div class="stats">
+    <span class="stat">🏠 活跃厨房 <b id="stat-active">0</b>/<b id="stat-kitchens">0</b></span>
+    <span class="stat">👨‍🍳 厨师 <b id="stat-chefs">0</b></span>
+    <span class="stat">🍽 已出餐 <b id="stat-served">0</b></span>
+  </div>
+</header>
+
+<nav class="switchbar" aria-label="厨房切换条">
+  <button id="sw-prev" class="sw-arrow" type="button" title="上一间厨房（← 键）">◀</button>
+  <div id="sw-cards" class="sw-cards"></div>
+  <button id="sw-next" class="sw-arrow" type="button" title="下一间厨房（→ 键）">▶</button>
+  <label class="follow" title="开启后：别家厨房来新事件时自动跳过去；手动切换后暂停 30 秒再恢复跟随">
+    <input type="checkbox" id="follow" checked>
+    <span id="follow-text">跟随最新</span>
+  </label>
+</nav>
+
+<main class="stage-wrap">
+  <section id="stage" class="stage">
+    <div id="stage-empty" class="stage-empty">🍳 暂无厨房开工，等待 codex 会话…</div>
+  </section>
+  <button id="feed-toggle" class="feed-toggle" type="button">📜 订单流水</button>
+  <aside id="feed-panel" class="feed-panel">
+    <div class="feed-head">
+      <h2>📜 订单流水</h2>
+      <div class="feed-filter">
+        <button id="ff-current" type="button" class="on">当前厨房</button>
+        <button id="ff-all" type="button">全部</button>
+      </div>
+    </div>
+    <ul id="feed" class="feed"></ul>
+  </aside>
+</main>
+
+<script src="js/store.js"></script>
+<script src="js/mock.js"></script>
+<script src="js/net.js"></script>
+<script src="js/kitchens-ui.js"></script>
+<script type="module" src="js/main.js"></script>
+</body>
+</html>

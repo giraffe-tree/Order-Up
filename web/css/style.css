@@ -1,0 +1,556 @@
+/* ============ Codex Overcooked 3D 壳 · 视觉规范（art-direction 第 4/5/6 节） ============
+   票卡米白 #F5EBD7 / 描边暗紫棕 #2A2138 / 暖色木质 / 超粗圆体感字体栈 / 无蓝紫渐变 */
+
+:root {
+  --paper: #F5EBD7;
+  --ink: #2A2138;
+  --wall: #3A2E40;
+  --wall-deep: #241C2E;
+  --wood: #7A5230;
+  --wood-light: #D2A06B;
+  --counter: #FEC457;
+  --stone: #B89B78;
+  --metal: #928688;
+  --flame: #F57B4A;
+  --red: #D94F3D;
+  --gold: #F2C230;
+  --green: #58B24C;
+  --chef-blue: #447EE0;
+  --font-round: "Baloo 2", "Fredoka", "VAG Rounded", "PingFang SC",
+    "Hiragino Sans GB", "Microsoft YaHei", "Source Han Sans SC", sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; }
+
+body {
+  font-family: var(--font-round);
+  font-weight: 600;
+  background: #E8CD9E;
+  color: var(--ink);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  user-select: none;
+}
+
+button { font-family: inherit; cursor: pointer; }
+
+/* ---------------- 顶部标题栏 ---------------- */
+.topbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 8px 16px;
+  background: var(--wood);
+  border-bottom: 4px solid #3A2415;
+}
+
+.topbar h1 {
+  font-size: 22px;
+  font-weight: 900;
+  color: #FFFFFF;
+  letter-spacing: 0.5px;
+  /* 白字 + 深色粗描边（HUD 字体气质） */
+  text-shadow:
+    2px 0 0 #3A2415, -2px 0 0 #3A2415, 0 2px 0 #3A2415, 0 -2px 0 #3A2415,
+    1.4px 1.4px 0 #3A2415, -1.4px 1.4px 0 #3A2415, 1.4px -1.4px 0 #3A2415,
+    -1.4px -1.4px 0 #3A2415, 0 4px 0 rgba(0,0,0,0.35);
+  transform: rotate(-1deg);
+  white-space: nowrap;
+}
+
+.conn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--paper);
+  background: rgba(245, 235, 215, 0.12);
+  border: 2px solid rgba(245, 235, 215, 0.25);
+  border-radius: 999px;
+  padding: 3px 10px;
+  white-space: nowrap;
+}
+.conn::before {
+  content: "";
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  background: var(--metal);
+  box-shadow: 0 0 0 2px rgba(0,0,0,0.25);
+}
+.conn.ok::before { background: var(--green); box-shadow: 0 0 6px var(--green); }
+.conn.bad::before { background: var(--red); box-shadow: 0 0 6px var(--red); }
+
+.stats {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+.stat {
+  font-size: 13px;
+  font-weight: 800;
+  color: var(--paper);
+  background: rgba(245, 235, 215, 0.10);
+  border: 2px solid rgba(245, 235, 215, 0.22);
+  border-radius: 10px;
+  padding: 4px 10px;
+  white-space: nowrap;
+}
+.stat b { color: var(--gold); font-weight: 900; }
+
+/* ---------------- 厨房切换条 ---------------- */
+.switchbar {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 12px;
+  background: var(--wood);
+  border-bottom: 4px solid #3A2415;
+}
+
+.sw-arrow {
+  flex: 0 0 auto;
+  width: 38px; height: 46px;
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--wood);
+  border: 3px solid #3A2415;
+  border-radius: 12px;
+  box-shadow: 0 3px 0 #3A2415;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.sw-arrow:hover { background: #8d6238; }
+.sw-arrow:active { transform: translateY(3px); box-shadow: 0 0 0 #3A2415; }
+
+.sw-cards {
+  flex: 1 1 auto;
+  display: flex;
+  gap: 10px;
+  overflow-x: auto;
+  padding: 4px 2px 6px;
+  scrollbar-width: thin;
+}
+
+.sw-card {
+  position: relative;
+  flex: 0 0 auto;
+  display: grid;
+  grid-template-columns: auto auto 1fr;
+  grid-template-rows: auto auto;
+  align-items: center;
+  column-gap: 6px;
+  min-width: 150px;
+  max-width: 210px;
+  padding: 7px 12px 7px 9px;
+  text-align: left;
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: 0 4px 0 var(--ink);
+  transition: transform 0.1s, box-shadow 0.1s, background 0.1s;
+}
+.sw-card:hover { transform: translateY(-2px); box-shadow: 0 6px 0 var(--ink); }
+.sw-card.on {
+  background: var(--counter);
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ink), 0 0 0 3px var(--flame);
+}
+
+.sw-card .seq {
+  grid-row: 1 / 3;
+  width: 24px; height: 24px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--wood);
+  border-radius: 50%;
+}
+.sw-card.on .seq { background: var(--red); }
+
+.sw-card .lamp {
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--metal);
+  border: 2px solid var(--ink);
+}
+.sw-card .lamp.on { background: var(--green); box-shadow: 0 0 6px var(--green); }
+
+.sw-card .kname {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sw-card .kmeta {
+  grid-column: 2 / 4;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--wood);
+  white-space: nowrap;
+}
+
+/* 未读事件红点 */
+.sw-card .badge {
+  position: absolute;
+  top: -9px; right: -7px;
+  min-width: 22px; height: 22px;
+  padding: 0 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 12px;
+  font-weight: 900;
+  color: #fff;
+  background: var(--red);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  box-shadow: 0 2px 0 var(--ink);
+  animation: badge-pop 0.25s ease-out;
+}
+@keyframes badge-pop {
+  0% { transform: scale(0.3); }
+  70% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+
+.follow {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--paper);
+  cursor: pointer;
+  white-space: nowrap;
+}
+.follow input {
+  appearance: none;
+  width: 40px; height: 22px;
+  background: var(--metal);
+  border: 3px solid #3A2415;
+  border-radius: 999px;
+  position: relative;
+  cursor: pointer;
+  transition: background 0.15s;
+}
+.follow input::after {
+  content: "";
+  position: absolute;
+  top: 1px; left: 2px;
+  width: 14px; height: 14px;
+  background: var(--paper);
+  border: 2px solid var(--ink);
+  border-radius: 50%;
+  transition: left 0.15s;
+}
+.follow input:checked { background: var(--green); }
+.follow input:checked::after { left: 16px; }
+
+/* ---------------- 主舞台（3D 画布） ---------------- */
+.stage-wrap {
+  flex: 1 1 auto;
+  display: flex;
+  min-height: 0;
+  position: relative;
+}
+
+.stage {
+  flex: 1 1 auto;
+  position: relative;
+  margin: 14px;
+  min-width: 0;
+  border: 4px solid var(--ink);
+  border-radius: 20px;
+  overflow: hidden;
+  /* 暖木墙面 + 暖色暗格地板，把视线锁在厨房内 */
+  background:
+    repeating-conic-gradient(#6E4A2F 0% 25%, #5E3F28 0% 50%) 0 0 / 56px 56px;
+  box-shadow: inset 0 0 60px rgba(0, 0, 0, 0.45), 0 6px 0 #3A2415;
+}
+.stage canvas { display: block; }
+
+.stage-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 18px;
+  font-weight: 900;
+  color: var(--paper);
+  text-shadow: 0 2px 0 var(--ink);
+  pointer-events: none;
+  z-index: 2;
+}
+
+.renderer-badge {
+  position: absolute;
+  top: 10px; left: 10px;
+  z-index: 3;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--ink);
+  background: var(--gold);
+  border: 2.5px solid var(--ink);
+  border-radius: 999px;
+  padding: 3px 10px;
+  box-shadow: 0 3px 0 var(--ink);
+}
+
+/* 占位渲染器（stub）样式 */
+.stub-canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+}
+.stub-log {
+  position: absolute;
+  left: 10px; bottom: 10px;
+  z-index: 3;
+  max-width: 60%;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  pointer-events: none;
+}
+.stub-log div {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--paper);
+  background: rgba(42, 33, 56, 0.85);
+  border: 2px solid rgba(245, 235, 215, 0.3);
+  border-radius: 8px;
+  padding: 2px 8px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* ---------------- 订单流水（票卡） ---------------- */
+.feed-panel {
+  flex: 0 0 320px;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  margin: 14px 14px 14px 0;
+  background: #8A6F52;
+  border: 4px solid var(--ink);
+  border-radius: 18px;
+  overflow: hidden;
+  box-shadow: 0 6px 0 #3A2415;
+}
+
+.feed-head {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  background: var(--wood);
+}
+.feed-head h2 {
+  font-size: 15px;
+  font-weight: 900;
+  color: var(--paper);
+  white-space: nowrap;
+}
+.feed-filter { display: flex; gap: 6px; }
+.feed-filter button {
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--paper);
+  background: rgba(245, 235, 215, 0.12);
+  border: 2px solid rgba(245, 235, 215, 0.3);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.feed-filter button.on {
+  color: var(--ink);
+  background: var(--counter);
+  border-color: var(--ink);
+  box-shadow: 0 2px 0 #3A2415;
+}
+
+.feed {
+  flex: 1 1 auto;
+  list-style: none;
+  overflow-y: auto;
+  padding: 12px 12px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scrollbar-width: thin;
+}
+
+.feed-empty {
+  font-size: 13px;
+  font-weight: 800;
+  color: rgba(245, 235, 215, 0.65);
+  text-align: center;
+  padding: 18px 6px;
+}
+
+/* Overcooked 订单票：米白撕纸边 + 顶部彩色时间条 */
+.ticket {
+  position: relative;
+  background: var(--paper);
+  padding: 0 10px 12px;
+  clip-path: polygon(
+    0 0, 100% 0,
+    100% calc(100% - 7px),
+    95% 100%, 90% calc(100% - 7px),
+    85% 100%, 80% calc(100% - 7px),
+    75% 100%, 70% calc(100% - 7px),
+    65% 100%, 60% calc(100% - 7px),
+    55% 100%, 50% calc(100% - 7px),
+    45% 100%, 40% calc(100% - 7px),
+    35% 100%, 30% calc(100% - 7px),
+    25% 100%, 20% calc(100% - 7px),
+    15% 100%, 10% calc(100% - 7px),
+    5% 100%, 0 calc(100% - 7px)
+  );
+  filter: drop-shadow(0 3px 0 var(--ink));
+  animation: ticket-in 0.22s ease-out;
+}
+@keyframes ticket-in {
+  0% { transform: translateX(-14px); opacity: 0; }
+  100% { transform: translateX(0); opacity: 1; }
+}
+
+.ticket .tbar {
+  height: 7px;
+  margin: 0 -10px 7px;
+  background: var(--metal);
+}
+
+.ticket .t-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.ticket .t-icon { font-size: 16px; }
+.ticket .t-label {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--ink);
+  flex: 1 1 auto;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticket .t-time {
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--stone);
+  white-space: nowrap;
+}
+
+.ticket .t-body {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin-top: 3px;
+}
+.ticket .t-chef {
+  flex: 0 0 auto;
+  font-size: 12px;
+  font-weight: 900;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 2px solid var(--ink);
+  color: var(--ink);
+  background: var(--counter);
+  max-width: 40%;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ticket .t-detail {
+  flex: 1 1 auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--wood);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.ticket .t-kitchen {
+  margin-top: 3px;
+  font-size: 11px;
+  font-weight: 800;
+  color: var(--stone);
+}
+
+.feed-toggle { display: none; }
+
+/* ---------------- 响应式：<900px 流水移到下方抽屉 ---------------- */
+@media (max-width: 900px) {
+  .topbar { flex-wrap: wrap; gap: 8px; }
+  .topbar h1 { font-size: 18px; }
+  .stats { margin-left: 0; }
+
+  .stage-wrap { flex-direction: column; }
+  .stage { margin: 10px; }
+
+  .feed-panel {
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    z-index: 50;
+    flex: none;
+    height: 48vh;
+    margin: 0;
+    border-radius: 18px 18px 0 0;
+    border-bottom: none;
+    transform: translateY(102%);
+    transition: transform 0.25s ease-out;
+  }
+  .feed-panel.open { transform: translateY(0); }
+
+  .feed-toggle {
+    display: block;
+    position: fixed;
+    right: 14px; bottom: 14px;
+    z-index: 60;
+    font-size: 14px;
+    font-weight: 900;
+    color: var(--ink);
+    background: var(--counter);
+    border: 3px solid var(--ink);
+    border-radius: 999px;
+    padding: 8px 16px;
+    box-shadow: 0 4px 0 var(--ink);
+  }
+  .feed-toggle:active { transform: translateY(3px); box-shadow: 0 1px 0 var(--ink); }
+
+  .sw-card { min-width: 132px; }
+}
+
+/* 自测结果输出（?selftest=1 时由 selftest.js 追加） */
+#selftest-result {
+  position: fixed;
+  left: 8px; top: 8px;
+  z-index: 999;
+  font: 12px/1.5 monospace;
+  color: #0f0;
+  background: rgba(0, 0, 0, 0.85);
+  padding: 8px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+  max-width: 90vw;
+}
