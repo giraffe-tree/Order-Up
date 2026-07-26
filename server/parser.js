@@ -61,6 +61,23 @@ export class KitchenStore {
     this.kitchens = new Map();      // kitchenId -> kitchen（内部多 lastWrite 字段）
     this.threadParent = new Map();  // threadId -> parentThreadId
     this.threadKitchen = new Map(); // threadId -> kitchenId
+    this.threadNames = new Map();   // threadId -> thread_name（来自 session_index.jsonl）
+  }
+
+  // 会话标题索引（可在回放后反复调用；名字变化时发 kitchen_updated）
+  applyThreadNames(names) {
+    if (!names) return;
+    for (const [id, name] of names) this.threadNames.set(id, name);
+    for (const k of this.kitchens.values()) {
+      if (!k.id.startsWith('t:')) continue;
+      const rootId = k.id.slice(2);
+      const real = this.threadNames.get(rootId);
+      if (real && k.name !== real) {
+        k.name = real;
+        k.named = true;
+        this.emit({ type: 'kitchen_updated', kitchen: this._pubKitchen(k) });
+      }
+    }
   }
 
   // ---------- 基础 API（真实数据与 demo 模拟器共用） ----------
@@ -75,7 +92,7 @@ export class KitchenStore {
       this.kitchens.set(id, k);
     } else {
       if (name) k.name = name;
-      if (cwd) { k.cwd = cwd; if (!name) k.name = base(cwd); }
+      if (cwd) { k.cwd = cwd; if (!name && !k.named) k.name = base(cwd); }
     }
     return k;
   }
@@ -206,7 +223,13 @@ export class KitchenStore {
       kitchenId = 'cwd:' + cwd;
     }
     const k = this.upsertKitchen({ id: kitchenId, cwd });
-    if (!parent && cwd) { k.cwd = cwd; k.name = base(cwd); } // 根线程权威命名
+    if (!parent && cwd) {
+      k.cwd = cwd;
+      // 根线程权威命名：优先 session_index 里的会话标题，拿不到再用目录名；已命名不降级
+      const real = this.threadNames.get(threadId);
+      if (real) { k.name = real; k.named = true; }
+      else if (!k.named) k.name = base(cwd);
+    }
     this.threadKitchen.set(threadId, kitchenId);
     const depth = spawn?.depth ?? 0;
     const name = p.agent_nickname || spawn?.agent_nickname ||

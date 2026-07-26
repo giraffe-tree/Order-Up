@@ -18,6 +18,8 @@ export class SessionWatcher {
     this.pollMs = pollMs;
     this.windowMs = windowMs;
     this.maxFiles = maxFiles;
+    this.indexFile = path.resolve(dir, '..', 'session_index.jsonl'); // 会话标题索引
+    this._indexMtime = 0;
     this.files = new Map();   // 文件路径 -> { offset, pending, threadId, live }
     this.known = new Set();   // 所有扫描见过的路径
     this.watcher = null;
@@ -27,6 +29,7 @@ export class SessionWatcher {
   }
 
   async start() {
+    await this._loadNames().catch(() => {}); // 先加载标题索引，回放时即可用真名
     const list = await this._scan();
     const now = Date.now();
     const recent = list.filter((f) => now - f.mtimeMs <= this.windowMs);
@@ -68,6 +71,24 @@ export class SessionWatcher {
     for (const t of this._pending.values()) clearTimeout(t);
   }
 
+  // 加载 ~/.codex/session_index.jsonl：{ id, thread_name } → 交给 store 命名厨房
+  async _loadNames() {
+    const st = await fsp.stat(this.indexFile);
+    if (st.mtimeMs === this._indexMtime) return;
+    const text = await fsp.readFile(this.indexFile, 'utf8');
+    const names = new Map();
+    for (const line of text.split('\n')) {
+      const s = line.trim();
+      if (!s) continue;
+      try {
+        const o = JSON.parse(s);
+        if (o.id && o.thread_name) names.set(o.id, o.thread_name);
+      } catch { /* 忽略坏行 */ }
+    }
+    this._indexMtime = st.mtimeMs;
+    this.store.applyThreadNames(names);
+  }
+
   async _scan() {
     const out = [];
     const walk = async (dir, depth) => {
@@ -93,6 +114,7 @@ export class SessionWatcher {
 
   async _poll() {
     if (this._stopped) return;
+    await this._loadNames().catch(() => {}); // 标题可能迟到，轮询时补齐
     const before = new Set(this.known);
     const list = await this._scan();
     for (const f of list) {

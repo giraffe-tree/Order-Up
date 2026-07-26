@@ -174,6 +174,15 @@
         break;
       }
 
+      case 'kitchen_updated': {
+        var inc = normalizeKitchen(ev.kitchen || { id: 'unknown' });
+        k = findKitchen(state, inc.id);
+        if (!k) { state.kitchens.push(inc); k = inc; }
+        else { k.name = inc.name; k.cwd = inc.cwd; k.active = inc.active; }
+        effects.push({ type: 'kitchen_updated', kitchenId: k.id });
+        break;
+      }
+
       case 'dish_served': {
         k = ensureKitchen(state, String(ev.kitchenId));
         k.servedCount = (k.servedCount || 0) + 1;
