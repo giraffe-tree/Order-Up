@@ -1,0 +1,12 @@
+# 依赖
+node_modules/
+
+# 系统文件
+.DS_Store
+
+# 自测截图产物（可用 web/js3d/test.html 重新生成）
+web/js/shell-selftest.png
+web/js3d/selftest*.png
+
+# 日志
+*.log
