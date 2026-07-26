@@ -1,0 +1,122 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>KitchenRenderer 自测</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #1B1424; overflow: hidden;
+    font-family: "PingFang SC", "Microsoft YaHei", sans-serif; }
+  #app { position: absolute; inset: 0; }
+  #hud { position: absolute; top: 10px; left: 12px; color: #F5EBD7; z-index: 2;
+    background: rgba(30,22,40,.75); padding: 8px 14px; border-radius: 10px; font-size: 14px; }
+  #hud b { color: #FEC457; }
+  #err { position: absolute; top: 0; left: 0; right: 0; z-index: 9; display: none;
+    background: #D94F3D; color: #fff; font: 14px/1.6 monospace; padding: 8px 12px; white-space: pre-wrap; }
+</style>
+</head>
+<body>
+<div id="err"></div>
+<div id="hud">🍳 <b>KitchenRenderer 自测</b>　<span id="log">初始化…</span></div>
+<div id="app"></div>
+<script>
+  // 控制台零报错校验：任何错误都显示到页面并写进 title
+  window.__errs = [];
+  function reportErr(msg) {
+    window.__errs.push(String(msg));
+    const el = document.getElementById('err');
+    el.style.display = 'block';
+    el.textContent = 'ERR: ' + window.__errs.join('\n');
+    document.title = 'ERR ' + window.__errs.length;
+  }
+  window.onerror = (m, s, l, c) => reportErr(`${m} @${s}:${l}:${c}`);
+  window.addEventListener('unhandledrejection', (e) => reportErr('unhandledrejection: ' + (e.reason && e.reason.stack || e.reason)));
+</script>
+<script type="module">
+import { KitchenRenderer } from './kitchen3d.js';
+
+const log = (t) => { document.getElementById('log').textContent = t; };
+const qs = new URLSearchParams(location.search);
+const SHOT = qs.get('shot') === '1'; // 截图模式：时间轴压缩，最终停在繁忙状态
+const CLOSED = qs.get('closed') === '1'; // 歇业模式：active=false 压暗 + 歇业中木牌
+const CROWD = qs.get('crowd') === '1';   // 超员模式：20 厨师验证同屏上限 12 + 后厨木牌
+
+// ---- 内联 mock：6 厨师 ----
+const kitchen = { id: 'k1', name: '测试厨房', cwd: '/tmp/demo', chefs: [], servedCount: 0, active: true, lastTs: Date.now() };
+const chefs = [
+  { id: 'c1', name: '阿橙', role: null, depth: 0, status: 'cooking', color: '#E0473C', lastAction: null },
+  { id: 'c2', name: '小蓝', role: null, depth: 0, status: 'cooking', color: '#447EE0', lastAction: null },
+  { id: 'c3', name: '绿绿', role: null, depth: 0, status: 'cooking', color: '#58B24C', lastAction: null },
+  { id: 'c4', name: '黄黄', role: null, depth: 0, status: 'cooking', color: '#F2C230', lastAction: null },
+  { id: 'c5', name: '紫米', role: null, depth: 1, status: 'cooking', color: '#9B59B6', lastAction: null },
+  { id: 'c6', name: '白白', role: null, depth: 1, status: 'idle',   color: '#16A2A2', lastAction: null },
+];
+kitchen.chefs = chefs;
+if (CLOSED) kitchen.active = false;
+if (CROWD) {
+  const extra = ['#E0473C', '#447EE0', '#58B24C', '#F2C230', '#9B59B6', '#16A2A2', '#E67E22'];
+  for (let i = 7; i <= 20; i++) {
+    chefs.push({ id: 'c' + i, name: '厨' + i, role: null, depth: 1, status: 'idle', color: extra[i % 7], lastAction: null });
+  }
+}
+
+const r = new KitchenRenderer(document.getElementById('app'));
+window.__renderer = r;
+r.setKitchen(kitchen, chefs);
+
+// 无头截图模式：Chrome 只在最后触发一次 rAF，中途渲染不上屏。
+// 故用 setInterval 只推进模拟（step 不渲染），最后一帧由 rAF 正常渲染上屏。
+if (SHOT) {
+  setInterval(() => r.step(0.05), 50);
+}
+
+const A = (id, kind, label) => r.chefAction(id, { kind, label, detail: 'mock', ts: Date.now() });
+
+// ---- 时间轴：循环触发全部 11 种 action.kind + chef_status + dish_served + addChef ----
+const steps = [
+  [400,  () => { A('c1', 'read', '看菜谱');   log('c1 read → 案板'); }],
+  [800,  () => { A('c2', 'edit', '切菜炒菜'); log('c2 edit → 炒锅'); }],
+  [1200, () => { A('c3', 'exec', '跑命令');   log('c3 exec → 灶台'); }],
+  [1600, () => { A('c4', 'search', '订食材'); log('c4 search → 电话台'); }],
+  [2000, () => { A('c5', 'tool', '高压锅');   log('c5 tool → 高压锅'); }],
+  [2400, () => { A('c6', 'think', '想菜单');  log('c6 think → 💭'); }],
+  [3000, () => { A('c1', 'speak', '喊话');    log('c1 speak → 出餐口'); }],
+  [3600, () => { A('c2', 'serve', '出餐'); r.dishServed({ name: '番茄汤', by: '小蓝', ts: Date.now() }); log('c2 serve + dish_served'); }],
+  [4300, () => { A('c3', 'burn', '糊了');     log('c3 burn → 💥'); }],
+  [5000, () => { r.chefStatus('c4', 'idle');  log('c4 idle → 回休息区'); }],
+  [5600, () => { r.chefStatus('c5', 'done');  log('c5 done → 坐下摘帽'); }],
+  [6200, () => { // addChef + join
+    const c7 = { id: 'c7', name: '新仔', role: 'sub', depth: 1, status: 'cooking', color: '#E67E22', lastAction: null };
+    r.addChef(c7);
+    A('c7', 'join', '入职');
+    log('c7 addChef + join 入场');
+  }],
+  [7000, () => { A('c6', 'read', '再看菜谱'); r.dishServed({ name: '寿司', by: '阿橙', ts: Date.now() }); log('c6 read + 再次 dish_served'); }],
+  [7800, () => { A('c3', 'exec', '重新点火'); A('c7', 'tool', '高压锅'); log('c3 exec / c7 tool'); }],
+  [8600, () => { A('c1', 'edit', '切配'); A('c2', 'search', '打电话'); log('c1 edit / c2 search'); }],
+];
+const LOOP_MS = 10000;
+function schedule(base) {
+  for (const [t, fn] of steps) setTimeout(fn, base + t);
+}
+schedule(0);
+if (!SHOT) setInterval(() => schedule(LOOP_MS), LOOP_MS); // 人工查看时循环播放
+else setTimeout(() => log('截图基准帧：多厨师同时干活中'), 9300); // 截图模式停在繁忙帧
+
+if (SHOT) setTimeout(() => {
+  document.title = JSON.stringify({
+    errs: window.__errs.length,
+    closed: r.closedSign && r.closedSign.visible,
+    back: r.backSign && r.backSign.visible,
+    backN: r._backN || 0,
+    hemi: r.hemi.intensity,
+    dir: r.dir.intensity,
+    visibleChefs: [...r.chefs.values()].filter((c) => c.visible).length,
+    signPos: r.backSign ? r.backSign.position.toArray().map((v) => +v.toFixed(2)) : null,
+  });
+}, 8700);
+
+log('时间轴已排期');
+</script>
+</body>
+</html>
