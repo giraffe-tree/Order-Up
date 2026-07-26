@@ -113,3 +113,170 @@ export function makeSprite(texture, w, h) {
   s.scale.set(w, h, 1);
   return s;
 }
+
+// ---------- 程序化场景纹理（确定性伪随机，禁外部资源） ----------
+
+function mulberry32(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6D2B79F5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function hexRGB(hex) {
+  return [(hex >> 16) & 255, (hex >> 8) & 255, hex & 255];
+}
+
+function shade(hex, f) {
+  const [r, g, b] = hexRGB(hex);
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v * f)));
+  return `rgb(${c(r)},${c(g)},${c(b)})`;
+}
+
+// 棋盘格地板：双色相间 + 每格色差 + 砖缝 + 磨损斑/划痕（seed 固定，每次构建一致）
+export function floorTexture(gw, gh, { light = 0xD2A06B, dark = 0x96663C, grout = 0x6E4A2F, cell = 128 } = {}) {
+  const w = gw * cell, h = gh * cell;
+  const [c, g] = makeCanvas(w, h);
+  const rnd = mulberry32(20260727);
+  for (let iz = 0; iz < gh; iz++) {
+    for (let ix = 0; ix < gw; ix++) {
+      const base = (ix + iz) % 2 === 0 ? light : dark;
+      const jitter = 0.90 + rnd() * 0.18;               // 每格色差
+      g.fillStyle = shade(base, jitter);
+      g.fillRect(ix * cell, iz * cell, cell, cell);
+      // 格内轻微拉丝（木纹感）
+      g.fillStyle = `rgba(0,0,0,${0.03 + rnd() * 0.04})`;
+      const sy = iz * cell + rnd() * cell;
+      g.fillRect(ix * cell, sy, cell, 2 + rnd() * 3);
+    }
+  }
+  // 磨损斑：半透明明暗椭圆
+  for (let i = 0; i < 46; i++) {
+    const x = rnd() * w, y = rnd() * h, rx = cell * (0.15 + rnd() * 0.5), ry = rx * (0.4 + rnd() * 0.5);
+    const dark2 = rnd() > 0.45;
+    g.fillStyle = dark2 ? `rgba(40,22,10,${0.04 + rnd() * 0.07})` : `rgba(255,240,214,${0.03 + rnd() * 0.05})`;
+    g.beginPath(); g.ellipse(x, y, rx, ry, rnd() * 3, 0, Math.PI * 2); g.fill();
+  }
+  // 划痕
+  g.strokeStyle = 'rgba(52,32,16,0.12)';
+  for (let i = 0; i < 22; i++) {
+    const x = rnd() * w, y = rnd() * h, len = 20 + rnd() * 90, a = rnd() * Math.PI;
+    g.lineWidth = 1 + rnd() * 1.5;
+    g.beginPath(); g.moveTo(x, y); g.lineTo(x + Math.cos(a) * len, y + Math.sin(a) * len); g.stroke();
+  }
+  // 砖缝（描在每格边缘，带内侧高光）
+  for (let ix = 0; ix <= gw; ix++) {
+    g.fillStyle = 'rgba(60,38,20,0.5)';
+    g.fillRect(ix * cell - 2, 0, 4, h);
+    g.fillStyle = 'rgba(255,235,200,0.10)';
+    g.fillRect(ix * cell + 2, 0, 2, h);
+  }
+  for (let iz = 0; iz <= gh; iz++) {
+    g.fillStyle = 'rgba(60,38,20,0.5)';
+    g.fillRect(0, iz * cell - 2, w, 4);
+    g.fillStyle = 'rgba(255,235,200,0.10)';
+    g.fillRect(0, iz * cell + 2, w, 2);
+  }
+  const t = toTexture(c);
+  t.anisotropy = 8;
+  return t;
+}
+
+// 厨房外大地面：中心暖木 → 边缘压暗的径向渐变（避免画面发灰发平）
+export function outerGroundTexture({ inner = 0x54402C, outer = 0x2E1F13 } = {}) {
+  const [c, g] = makeCanvas(512, 512);
+  const grad = g.createRadialGradient(256, 256, 60, 256, 256, 360);
+  const [r1, g1, b1] = hexRGB(inner), [r2, g2, b2] = hexRGB(outer);
+  grad.addColorStop(0, `rgb(${r1},${g1},${b1})`);
+  grad.addColorStop(1, `rgb(${r2},${g2},${b2})`);
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 512, 512);
+  return toTexture(c);
+}
+
+// 暖砖墙：错缝砖块 + 灰泥缝 + 每砖色差（可 RepeatWrapping 平铺）
+export function brickTexture({ a = 0xC79F72, b = 0xAD8557, mortar = 0xE2CEA9, tw = 512, th = 256, rows = 4, cols = 4 } = {}) {
+  const [c, g] = makeCanvas(tw, th);
+  const rnd = mulberry32(20260728);
+  g.fillStyle = shade(mortar, 1);
+  g.fillRect(0, 0, tw, th);
+  const bw = tw / cols, bh = th / rows, gap = Math.max(3, bh * 0.12);
+  for (let r = 0; r < rows; r++) {
+    const off = (r % 2) * bw * 0.5;
+    for (let cx = -1; cx < cols + 1; cx++) {
+      const x = cx * bw + off, y = r * bh;
+      const f = 0.9 + rnd() * 0.2;
+      const base = rnd() > 0.5 ? a : b;
+      g.fillStyle = shade(base, f);
+      g.fillRect(x + gap / 2, y + gap / 2, bw - gap, bh - gap);
+      // 砖面顶部微光、底部微暗，增加体积感
+      g.fillStyle = 'rgba(255,240,214,0.10)';
+      g.fillRect(x + gap / 2, y + gap / 2, bw - gap, 3);
+      g.fillStyle = 'rgba(50,30,14,0.12)';
+      g.fillRect(x + gap / 2, y + bh - gap / 2 - 3, bw - gap, 3);
+      // 偶发小疵点
+      if (rnd() > 0.6) {
+        g.fillStyle = `rgba(60,36,18,${0.05 + rnd() * 0.08})`;
+        g.beginPath();
+        g.ellipse(x + bw * (0.2 + rnd() * 0.6), y + bh * (0.3 + rnd() * 0.4), 3 + rnd() * 8, 2 + rnd() * 5, rnd() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+    }
+  }
+  const t = toTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  return t;
+}
+
+// 菜单黑板：深绿板面 + 粉笔字菜单（今日菜单 + 三行菜）
+export function chalkboardTexture({ w = 384, h = 288 } = {}) {
+  const [c, g] = makeCanvas(w, h);
+  const rnd = mulberry32(20260729);
+  g.fillStyle = '#33413A';
+  g.fillRect(0, 0, w, h);
+  // 板面做旧
+  for (let i = 0; i < 26; i++) {
+    g.fillStyle = `rgba(0,0,0,${0.03 + rnd() * 0.05})`;
+    g.beginPath();
+    g.ellipse(rnd() * w, rnd() * h, 12 + rnd() * 40, 6 + rnd() * 20, rnd() * 3, 0, Math.PI * 2);
+    g.fill();
+  }
+  g.strokeStyle = 'rgba(243,237,221,0.85)';
+  g.lineWidth = 3;
+  g.strokeRect(10, 10, w - 20, h - 20);
+  const CHALK = 'rgba(243,237,221,0.94)';
+  g.fillStyle = CHALK;
+  g.textAlign = 'center';
+  g.textBaseline = 'middle';
+  g.font = `bold 40px ${FONT}`;
+  g.fillText('今日菜单', w / 2, 48);
+  // 粉笔波浪下划线
+  g.strokeStyle = CHALK;
+  g.lineWidth = 2.5;
+  g.beginPath();
+  for (let x = w / 2 - 90; x <= w / 2 + 90; x += 6) {
+    const y = 76 + Math.sin(x * 0.25) * 3;
+    x === w / 2 - 90 ? g.moveTo(x, y) : g.lineTo(x, y);
+  }
+  g.stroke();
+  g.font = `34px ${FONT}`;
+  const rows = [
+    ['🍅 + 🥬 → 🍲', '番茄浓汤'],
+    ['🍚 + 🥒 → 🍣', '寿司卷'],
+    ['🥩 + 🍔 → 🍔', '汉堡排'],
+  ];
+  rows.forEach(([line], i) => {
+    const y = 120 + i * 52;
+    g.fillStyle = i === 0 ? 'rgba(248,225,108,0.95)' : CHALK; // 首行暖黄高亮
+    g.fillText(line, w / 2, y);
+  });
+  // 角落星形涂鸦
+  g.fillStyle = CHALK;
+  g.font = '26px sans-serif';
+  g.fillText('✦', 32, h - 32);
+  g.fillText('✦', w - 32, 32);
+  return toTexture(c);
+}

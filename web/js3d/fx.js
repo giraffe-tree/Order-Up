@@ -1,18 +1,46 @@
 // 粒子 / 特效系统：共享几何体 + 固定容量对象池，单入口 update
+// 粒子：chop/dust/steam/smoke/flame/spark/ember/sweat/chip/confetti
+// 额外特效：出餐飞菜 + 彩纸星星庆祝、糊了浓烟火星、电话台声波圈（全部走对象池，无每帧分配）
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL } from './palette.js';
 import { plankTexture } from './textures.js';
 
-const MAX_PARTICLES = 320;
+const MAX_PARTICLES = 420;
+const MAX_STARS = 12;   // 出餐庆祝星星池
+const MAX_RINGS = 8;    // 电话声波圈池
 
 const KINDS = {
   chop:   { color: 0xFFFFFF, grav: -6.0, drag: 0.92, life: 0.55, size: 0.07, spin: 8 },
+  chip:   { color: 0x58B24C, grav: -6.0, drag: 0.92, life: 0.50, size: 0.06, spin: 10 }, // 彩色菜屑（多色材质）
   dust:   { color: PAL.dust, grav: 0.6,  drag: 0.90, life: 0.50, size: 0.09, spin: 4 },
   steam:  { color: 0xF6F2E8, grav: 1.6,  drag: 0.96, life: 1.10, size: 0.10, spin: 2 },
   smoke:  { color: PAL.smoke, grav: 2.2, drag: 0.97, life: 1.60, size: 0.13, spin: 2 },
   flame:  { color: PAL.flame, grav: 2.6, drag: 0.94, life: 0.55, size: 0.10, spin: 6 },
   spark:  { color: PAL.flameCore, grav: 0.4, drag: 0.92, life: 0.45, size: 0.06, spin: 10 },
+  ember:  { color: 0xFFB03A, grav: -2.2, drag: 0.96, life: 0.85, size: 0.05, spin: 12 }, // 糊了迸出的火星
+  sweat:  { color: 0x7FC7D4, grav: -5.5, drag: 0.96, life: 0.60, size: 0.055, spin: 6 }, // 擦汗甩出的汗滴
+  confetti:{ color: 0xF2C230, grav: -3.2, drag: 0.965, life: 1.30, size: 0.075, spin: 9 }, // 出餐彩纸（多色材质）
 };
+
+// 多色粒子材质（切菜飞屑 / 出餐彩纸），spawn 时随机挑一个
+const MULTI_COLORS = {
+  chip:     [0x58B24C, 0xD94F3D, 0xF2C230, 0xF57B4A],  // 菜叶绿 / 番茄红 / 蛋黄 / 胡萝卜橙
+  confetti: [0xE0473C, 0xF2C230, 0x58B24C, 0xF57B4A, 0xF8E16C, 0xF5EBD7],
+};
+
+// 五角星挤出几何体（出餐庆祝）
+function makeStarGeo() {
+  const shape = new THREE.Shape();
+  const R = 0.1, r = 0.045;
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2 - Math.PI / 2;
+    const rad = i % 2 ? r : R;
+    const px = Math.cos(a) * rad, py = Math.sin(a) * rad;
+    if (i) shape.lineTo(px, py); else shape.moveTo(px, py);
+  }
+  shape.closePath();
+  return new THREE.ExtrudeGeometry(shape, { depth: 0.035, bevelEnabled: false });
+}
 
 export class FX {
   constructor(scene) {
@@ -23,6 +51,12 @@ export class FX {
       this.mats[k] = new THREE.MeshStandardMaterial({
         color: KINDS[k].color, flatShading: true, roughness: 1, metalness: 0,
       });
+    }
+    this._multi = {};
+    for (const k in MULTI_COLORS) {
+      this._multi[k] = MULTI_COLORS[k].map((c) => new THREE.MeshStandardMaterial({
+        color: c, flatShading: true, roughness: 1, metalness: 0,
+      }));
     }
     this.pool = [];
     this.live = [];
@@ -41,13 +75,44 @@ export class FX {
     this._dishMat = new THREE.MeshStandardMaterial({ color: PAL.plate, flatShading: true, roughness: 0.8 });
     this._foodMat = new THREE.MeshStandardMaterial({ color: PAL.flame, flatShading: true, roughness: 0.9 });
     this._foodMat2 = new THREE.MeshStandardMaterial({ color: 0x58B24C, flatShading: true, roughness: 0.9 });
+
+    // 出餐庆祝星星：固定容量对象池
+    this._starGeo = makeStarGeo();
+    this._starMat = new THREE.MeshStandardMaterial({
+      color: PAL.flameCore, flatShading: true, roughness: 0.7,
+      emissive: 0x8A6A1A, emissiveIntensity: 0.35,
+    });
+    this._starPool = [];
+    this._starLive = [];
+    for (let i = 0; i < MAX_STARS; i++) {
+      const m = new THREE.Mesh(this._starGeo, this._starMat);
+      m.visible = false;
+      m.castShadow = false;
+      scene.add(m);
+      this._starPool.push(m);
+    }
+
+    // 电话声波圈：固定容量对象池（每圈独立材质以分别控制透明度）
+    this._ringGeo = new THREE.RingGeometry(0.42, 0.5, 28);
+    this._ringPool = [];
+    this._ringLive = [];
+    for (let i = 0; i < MAX_RINGS; i++) {
+      const m = new THREE.Mesh(this._ringGeo, new THREE.MeshBasicMaterial({
+        color: PAL.red, transparent: true, opacity: 0, side: THREE.DoubleSide, depthWrite: false,
+      }));
+      m.rotation.x = -Math.PI / 2;
+      m.visible = false;
+      scene.add(m);
+      this._ringPool.push(m);
+    }
   }
 
   spawn(kind, x, y, z, vx = 0, vy = 0, vz = 0, scale = 1) {
     const m = this.pool.pop();
     if (!m) return;
     const k = KINDS[kind];
-    m.material = this.mats[kind];
+    const multi = this._multi[kind];
+    m.material = multi ? multi[(Math.random() * multi.length) | 0] : this.mats[kind];
     m.position.set(x, y, z);
     m.rotation.set(Math.random() * 3, Math.random() * 3, 0);
     m.visible = true;
@@ -58,6 +123,7 @@ export class FX {
       vz: vz + (Math.random() - 0.5) * 0.6,
       size: k.size * scale * (0.7 + Math.random() * 0.6),
       spin: k.spin,
+      phase: Math.random() * Math.PI * 2,
     });
   }
 
@@ -73,7 +139,45 @@ export class FX {
 
   addEmitter(e) { this.emitters.push({ acc: 0, on: true, rate: 6, ...e }); return this.emitters[this.emitters.length - 1]; }
 
-  // 出餐：菜品从出餐口飞出 + 「出餐 +1」弹出
+  // 糊了：大团浓烟 + 向上迸火星（供 ChefActor.burn 调用）
+  burnBurst(pos) {
+    this.burst('smoke', { x: pos.x, y: pos.y, z: pos.z }, 14, 1.3, 1.5);
+    this.burst('ember', { x: pos.x, y: pos.y - 0.25, z: pos.z }, 9, 2.0, 1);
+  }
+
+  // 出餐庆祝：彩纸雨 + 弹跳星星（对象池）
+  celebrate(pos) {
+    this.burst('confetti', pos, 16, 2.4, 1);
+    for (let i = 0; i < 5; i++) {
+      const m = this._starPool.pop();
+      if (!m) return;
+      m.position.set(
+        pos.x + (Math.random() - 0.5) * 0.6,
+        pos.y + Math.random() * 0.3,
+        pos.z + (Math.random() - 0.5) * 0.6,
+      );
+      m.rotation.set(0, Math.random() * Math.PI, 0);
+      m.scale.setScalar(1);
+      m.visible = true;
+      this._starLive.push({
+        m, t: 0, life: 1.0 + Math.random() * 0.3,
+        vy: 1.6 + Math.random() * 0.8, spin: 5 + Math.random() * 4,
+      });
+    }
+  }
+
+  // 电话台声波圈：从台面扩散的圆环，错相位连发 n 圈（对象池）
+  ringWave(pos, n = 3) {
+    for (let i = 0; i < n; i++) {
+      const m = this._ringPool.pop();
+      if (!m) return;
+      m.position.set(pos.x, pos.y, pos.z);
+      m.visible = false; // 负 t 相位延迟，到点才显示
+      this._ringLive.push({ m, t: -i * 0.22, life: 0.85 });
+    }
+  }
+
+  // 出餐：菜品从出餐口飞出 + 「出餐 +1」弹出 + 彩纸星星
   dishServed(from) {
     const g = new THREE.Group();
     const plate = new THREE.Mesh(this._dishGeo, this._dishMat);
@@ -85,6 +189,7 @@ export class FX {
     this.scene.add(g);
     this.flyers.push({ g, t: 0, life: 1.25, spin: 7 + Math.random() * 4 });
     this.popup('出餐 +1', new THREE.Vector3(from.x, from.y + 0.5, from.z + 0.3), '#D94F3D');
+    this.celebrate(new THREE.Vector3(from.x, from.y + 0.2, from.z + 0.2));
   }
 
   popup(text, pos, color = '#D94F3D') {
@@ -134,7 +239,48 @@ export class FX {
       const u = 1 - p.t / p.life;
       // 蒸汽/烟：先长大再缩；其余直接缩小
       const grow = (p.kind === 'steam' || p.kind === 'smoke') ? (0.6 + 0.8 * (p.t / p.life)) : 1;
-      p.m.scale.setScalar(Math.max(0.001, p.size * u * grow));
+      let s = p.size * u * grow;
+      // 火苗/火星快速闪动（跳动）
+      if (p.kind === 'flame' || p.kind === 'ember' || p.kind === 'spark') {
+        s *= 0.72 + 0.48 * Math.abs(Math.sin(p.t * 22 + p.phase));
+      }
+      // 彩纸左右飘摆
+      if (p.kind === 'confetti') {
+        p.m.position.x += Math.sin(p.t * 9 + p.phase) * 0.5 * dt;
+      }
+      p.m.scale.setScalar(Math.max(0.001, s));
+    }
+    // 出餐星星
+    for (let i = this._starLive.length - 1; i >= 0; i--) {
+      const st = this._starLive[i];
+      st.t += dt;
+      const u = st.t / st.life;
+      if (u >= 1) {
+        st.m.visible = false;
+        this._starPool.push(st.m);
+        this._starLive.splice(i, 1);
+        continue;
+      }
+      st.m.position.y += st.vy * dt * (1 - u * 0.7);
+      st.m.rotation.y += st.spin * dt;
+      st.m.scale.setScalar(Math.max(0.001, 1 - u * u));
+    }
+    // 电话声波圈
+    for (let i = this._ringLive.length - 1; i >= 0; i--) {
+      const r = this._ringLive[i];
+      r.t += dt;
+      if (r.t < 0) continue; // 相位延迟中
+      r.m.visible = true;
+      const u = r.t / r.life;
+      if (u >= 1) {
+        r.m.visible = false;
+        r.m.material.opacity = 0;
+        this._ringPool.push(r.m);
+        this._ringLive.splice(i, 1);
+        continue;
+      }
+      r.m.scale.setScalar(0.3 + u * 2.6);
+      r.m.material.opacity = 0.65 * (1 - u);
     }
     // 飞菜
     for (let i = this.flyers.length - 1; i >= 0; i--) {
@@ -173,10 +319,18 @@ export class FX {
     for (const p of this.live) this.scene.remove(p.m);
     for (const f of this.flyers) this.scene.remove(f.g);
     for (const p of this.popups) { p.s.material.map.dispose(); p.s.material.dispose(); this.scene.remove(p.s); }
+    for (const m of this._starPool) this.scene.remove(m);
+    for (const st of this._starLive) this.scene.remove(st.m);
+    for (const m of this._ringPool) { m.material.dispose(); this.scene.remove(m); }
+    for (const r of this._ringLive) { r.m.material.dispose(); this.scene.remove(r.m); }
     this.pool = []; this.live = []; this.flyers = []; this.popups = []; this.emitters = [];
+    this._starPool = []; this._starLive = []; this._ringPool = []; this._ringLive = [];
     this.geo.dispose();
     for (const k in this.mats) this.mats[k].dispose();
+    for (const k in this._multi) for (const mt of this._multi[k]) mt.dispose();
     this._dishGeo.dispose(); this._foodGeo.dispose();
     this._dishMat.dispose(); this._foodMat.dispose(); this._foodMat2.dispose();
+    this._starGeo.dispose(); this._starMat.dispose();
+    this._ringGeo.dispose();
   }
 }

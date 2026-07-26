@@ -28,10 +28,50 @@ const stageEl = document.getElementById('stage');
 const stageEmptyEl = document.getElementById('stage-empty');
 const feedEl = document.getElementById('feed');
 const connEl = document.getElementById('conn');
+const connBanner = document.getElementById('conn-banner');
 const statKitchens = document.getElementById('stat-kitchens');
 const statActive = document.getElementById('stat-active');
 const statChefs = document.getElementById('stat-chefs');
 const statServed = document.getElementById('stat-served');
+
+/* ---- 首次引导浮层：localStorage 记忆，顶栏 ? 按钮可重开 ---- */
+const GUIDE_KEY = 'co-guide-seen';
+const guideOverlay = document.getElementById('guide-overlay');
+function openGuide() { guideOverlay.hidden = false; }
+function closeGuide() {
+  guideOverlay.hidden = true;
+  try { localStorage.setItem(GUIDE_KEY, '1'); } catch (_) {}
+}
+document.getElementById('guide-start').addEventListener('click', closeGuide);
+document.getElementById('btn-help').addEventListener('click', openGuide);
+let guideSeen = false;
+try { guideSeen = !!localStorage.getItem(GUIDE_KEY); } catch (_) {}
+if (!guideSeen && !wantSelftest) openGuide(); // 自测模式不弹，避免干扰断言
+
+/* ---- 音效开关：window.COSound 不存在时隐藏按钮；所有调用防御式 ---- */
+const btnSound = document.getElementById('btn-sound');
+let soundMuted = false;
+function syncSoundBtn() {
+  if (window.COSound && typeof window.COSound.setMuted === 'function') {
+    btnSound.hidden = false;
+    btnSound.textContent = soundMuted ? '🔇' : '🔊';
+    btnSound.title = soundMuted ? '打开音效' : '静音';
+  } else {
+    btnSound.hidden = true;
+  }
+}
+btnSound.addEventListener('click', () => {
+  soundMuted = !soundMuted;
+  try { window.COSound?.setMuted?.(soundMuted); } catch (_) {}
+  syncSoundBtn();
+});
+syncSoundBtn();
+setTimeout(syncSoundBtn, 2000); // 音效模块可能异步注入，迟些再探一次
+function playSound(kind) {
+  try { window.COSound?.play?.(kind); } catch (_) {}
+}
+/* action.kind → 音效 kind（serve/burn/join/chop/sizzle/phone） */
+const SOUND_KIND = { serve: 'serve', burn: 'burn', join: 'join', edit: 'chop', exec: 'sizzle', search: 'phone' };
 
 /* ---- 渲染器：优先 3D（web/js3d/kitchen3d.js），加载失败回退到占位 stub ----
    契约方法：setKitchen(kitchen, chefs) / addChef(chef) / chefAction(chefId, action)
@@ -97,6 +137,23 @@ ffAll.addEventListener('click', () => {
   renderFeed();
 });
 
+/* ---- 订单流水：事件类型过滤 chips（全部/出餐/糊了/喊话/工具） ---- */
+let feedKind = 'all';
+const KIND_GROUPS = {
+  serve: ['serve'],
+  burn: ['burn'],
+  speak: ['speak'],
+  tools: ['read', 'edit', 'exec', 'search', 'tool', 'think', 'join']
+};
+document.querySelectorAll('#feed-kinds button').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    feedKind = btn.dataset.kind || 'all';
+    document.querySelectorAll('#feed-kinds button').forEach((b) =>
+      b.classList.toggle('on', b === btn));
+    renderFeed();
+  });
+});
+
 const feedPanel = document.getElementById('feed-panel');
 document.getElementById('feed-toggle').addEventListener('click', () => {
   feedPanel.classList.toggle('open');
@@ -108,6 +165,15 @@ function fmtTime(ts) {
   return p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds());
 }
 
+/* 相对时间：刚刚 / 12s 前 / 3m 前 / 2h 前 */
+function fmtRel(ts) {
+  const diff = Date.now() - (ts || 0);
+  if (diff < 5000) return '刚刚';
+  if (diff < 60000) return Math.floor(diff / 1000) + 's 前';
+  if (diff < 3600000) return Math.floor(diff / 60000) + 'm 前';
+  return Math.floor(diff / 3600000) + 'h 前';
+}
+
 function el(tag, cls, text) {
   const e = document.createElement(tag);
   if (cls) e.className = cls;
@@ -115,14 +181,21 @@ function el(tag, cls, text) {
   return e;
 }
 
+const LONG_DETAIL = 42;   // detail 超过此长度可点击展开
+const seenTickets = new WeakSet(); // 已渲染过的流水条目（仅新条目播入场动画）
+
 function renderFeed() {
   feedEl.textContent = '';
   const curId = ui.currentId();
   let shown = 0;
   state.feed.forEach((entry) => {
     if (feedMode === 'current' && entry.kitchenId !== curId) return;
+    if (feedKind !== 'all' && !(KIND_GROUPS[feedKind] || []).includes(entry.kind)) return;
     shown++;
-    const li = el('li', 'ticket kind-' + entry.kind);
+    const isNew = !seenTickets.has(entry);
+    seenTickets.add(entry);
+    const long = entry.detail && entry.detail.length > LONG_DETAIL;
+    const li = el('li', 'ticket kind-' + entry.kind + (isNew ? '' : ' seen') + (long ? ' has-long' : ''));
 
     const tbar = el('div', 'tbar');
     tbar.style.background = KIND_COLOR[entry.kind] || '#928688';
@@ -131,14 +204,24 @@ function renderFeed() {
     const head = el('div', 't-head');
     head.appendChild(el('span', 't-icon', KIND_ICON[entry.kind] || '•'));
     head.appendChild(el('span', 't-label', entry.label || entry.kind));
-    head.appendChild(el('span', 't-time', fmtTime(entry.ts)));
+    const tTime = el('span', 't-time', fmtRel(entry.ts));
+    tTime.dataset.ts = entry.ts || 0;
+    tTime.title = fmtTime(entry.ts); // 悬停看绝对时间
+    head.appendChild(tTime);
     li.appendChild(head);
 
     const body = el('div', 't-body');
     const chef = el('span', 't-chef', entry.chefName || '?');
     chef.style.background = entry.color || '#FEC457';
     body.appendChild(chef);
-    if (entry.detail) body.appendChild(el('span', 't-detail', entry.detail));
+    if (entry.detail) {
+      const detail = el('span', 't-detail', entry.detail);
+      if (long) {
+        detail.title = '点击展开 / 收起';
+        detail.addEventListener('click', () => li.classList.toggle('open'));
+      }
+      body.appendChild(detail);
+    }
     li.appendChild(body);
 
     if (feedMode === 'all' && entry.kitchenName) {
@@ -148,9 +231,17 @@ function renderFeed() {
   });
   if (!shown) {
     feedEl.appendChild(el('li', 'feed-empty',
+      feedKind !== 'all' ? '这类事件还没有记录～' :
       feedMode === 'current' ? '当前厨房还没有新订单～' : '还没有订单，等厨师们开工～'));
   }
 }
+
+/* 相对时间每 5s 刷新一次，无需重建票卡 */
+setInterval(() => {
+  feedEl.querySelectorAll('.t-time').forEach((t) => {
+    t.textContent = fmtRel(Number(t.dataset.ts) || 0);
+  });
+}, 5000);
 
 /* 快照播种：流水为空时用各厨师最近动作填充（真实历史模式不至于空板） */
 function seedFeed() {
@@ -195,22 +286,25 @@ const handlers = {
     const kid = ev.kitchenId || (ev.kitchen && ev.kitchen.id);
     if (kid && kid !== ui.currentId()) ui.noteEvent(kid);
 
-    // 当前厨房的事件：转发给渲染器
+    // 当前厨房的事件：转发给渲染器（并触发对应音效）
     const curId = ui.currentId();
     effects.forEach((ef) => {
       if (ef.type === 'snapshot' || ef.kitchenId !== curId) return;
       switch (ef.type) {
         case 'chef_added':
           renderer.addChef(ef.chef);
+          playSound('join');
           break;
         case 'chef_action':
           renderer.chefAction(ef.chef.id, ef.action);
+          if (SOUND_KIND[ef.action && ef.action.kind]) playSound(SOUND_KIND[ef.action.kind]);
           break;
         case 'chef_status':
           renderer.chefStatus(ef.chefId, ef.status);
           break;
         case 'dish_served':
           renderer.dishServed(ef.dish);
+          playSound('serve');
           break;
       }
     });
@@ -224,19 +318,23 @@ const handlers = {
   onStatus(text, cls) {
     connEl.textContent = text;
     connEl.className = 'conn' + (cls ? ' ' + cls : '');
+    // 断线时舞台顶部同时挂出明显横幅（重连成功自动消失）
+    connBanner.hidden = cls !== 'bad';
   }
 };
 
 if (useMock) COMock.connect(handlers);
 else CONet.connect(handlers);
 
-/* ---- 键盘切换：←/→ 前后间，数字键 1-9 直达 ---- */
+/* ---- 键盘切换：←/→ 前后间，数字键 1-9 直达；Esc 关引导，? 开引导 ---- */
 window.addEventListener('keydown', (e) => {
+  if (e.key === 'Escape' && !guideOverlay.hidden) { closeGuide(); e.preventDefault(); return; }
   const t = e.target;
   if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
   if (e.key === 'ArrowLeft') { ui.prev(); e.preventDefault(); }
   else if (e.key === 'ArrowRight') { ui.next(); e.preventDefault(); }
   else if (/^[1-9]$/.test(e.key)) ui.jump(Number(e.key));
+  else if (e.key === '?') openGuide();
 });
 
 /* ---- 自测（?mock=1&selftest=1）：脚本化断言，结果写入 #selftest-result ---- */

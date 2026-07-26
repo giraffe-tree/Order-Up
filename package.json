@@ -12,7 +12,8 @@
   "scripts": {
     "start": "node bin/codex-kitchen.js",
     "dev": "node bin/codex-kitchen.js --demo",
-    "demo": "node bin/codex-kitchen.js --demo"
+    "demo": "node bin/codex-kitchen.js --demo",
+    "test": "node scripts/selftest-server.js"
   },
   "license": "MIT",
   "files": [

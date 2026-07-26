@@ -1,7 +1,7 @@
 // 厨房静态场景：12×9 地板、矮墙、沿墙台面 + 中央岛台（回字走道≥2格）、全部工位
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL } from './palette.js';
-import { iconTexture } from './textures.js';
+import { iconTexture, floorTexture, outerGroundTexture, brickTexture } from './textures.js';
 
 export const GW = 12, GH = 9;
 export const cellToWorld = (ix, iz) => ({ x: ix - (GW - 1) / 2, z: iz - (GH - 1) / 2 });
@@ -142,7 +142,7 @@ function buildStation(group, s) {
   spot.group = sub;
 
   switch (s.kind) {
-    case 'board': { // 案板：白砧板 + 菜刀
+    case 'board': { // 案板：白砧板 + 菜刀 + 待切蔬菜与面团
       const board = box(0.6, 0.05, 0.4, mat('board', PAL.board));
       board.position.set(x, topY + 0.025, z);
       const blade = box(0.3, 0.02, 0.08, mat('knife', PAL.knife, { metalness: 0.4, roughness: 0.5 }));
@@ -150,6 +150,18 @@ function buildStation(group, s) {
       const handle = box(0.12, 0.03, 0.05, mat('wallCap', PAL.wallCap));
       handle.position.set(x - 0.13, topY + 0.06, z);
       sub.add(board, blade, handle);
+      // 番茄（两半）+ 生菜球 + 面团
+      const tom1 = new THREE.Mesh(geo('tomato', () => new THREE.SphereGeometry(0.075, 10, 8)), mat('tomato', PAL.tomato, { roughness: 0.7 }));
+      tom1.position.set(x - 0.24, topY + 0.125, z - 0.1);
+      const tom2 = new THREE.Mesh(geo('tomatoHalf', () => new THREE.SphereGeometry(0.06, 10, 6, 0, Math.PI)), mat('tomato', PAL.tomato, { roughness: 0.7 }));
+      tom2.rotation.z = -Math.PI / 2;
+      tom2.position.set(x - 0.1, topY + 0.11, z + 0.13);
+      const lettuce = new THREE.Mesh(geo('lettuce', () => new THREE.IcosahedronGeometry(0.09, 0)), mat('lettuce', PAL.lettuce, { roughness: 0.85 }));
+      lettuce.position.set(x + 0.26, topY + 0.14, z - 0.14);
+      const dough = new THREE.Mesh(geo('dough', () => new THREE.SphereGeometry(0.1, 10, 8)), mat('dough', PAL.dough, { roughness: 0.95 }));
+      dough.scale.y = 0.62;
+      dough.position.set(x + 0.28, topY + 0.11, z + 0.16);
+      sub.add(tom1, tom2, lettuce, dough);
       spot.knife = blade; spot.knifeHome = blade.position.clone();
       break;
     }
@@ -164,7 +176,7 @@ function buildStation(group, s) {
       spot.wok = wok;
       break;
     }
-    case 'stove': { // 灶台：黑炉盘 + 红点 + 金属锅
+    case 'stove': { // 灶台：黑炉盘 + 红点 + 金属锅（带盖柄/蒸汽口）+ 炉前旋钮
       const plate = new THREE.Mesh(geo('stovePlate', () => new THREE.CylinderGeometry(0.32, 0.32, 0.06, 20)), mat('stoveTop', PAL.stoveTop));
       plate.position.set(x, topY + 0.03, z);
       plate.castShadow = true;
@@ -173,19 +185,43 @@ function buildStation(group, s) {
       const pot = new THREE.Mesh(geo('pot', () => new THREE.CylinderGeometry(0.26, 0.24, 0.28, 14)), mat('metal', PAL.metal, { metalness: 0.3, roughness: 0.6 }));
       pot.position.set(x, topY + 0.2, z);
       pot.castShadow = true;
+      // 锅盖 + 盖柄（蒸汽从口沿冒出，粒子由 FX 发射器驱动）
+      const lid = new THREE.Mesh(geo('potLid', () => new THREE.CylinderGeometry(0.27, 0.25, 0.05, 14)), mat('steelM', PAL.steel, { metalness: 0.35, roughness: 0.55 }));
+      lid.position.set(x, topY + 0.36, z);
+      const knobTop = new THREE.Mesh(geo('lidKnob', () => new THREE.SphereGeometry(0.045, 8, 6)), mat('wallCap', PAL.wallCap));
+      knobTop.position.set(x, topY + 0.41, z);
+      // 锅耳
+      const ear1 = box(0.08, 0.04, 0.05, mat('metal', PAL.metal, { metalness: 0.3 }));
+      ear1.position.set(x + 0.28, topY + 0.24, z);
+      const ear2 = ear1.clone(); ear2.position.x = x - 0.28;
+      // 炉前旋钮（朝南面板，厨师站位侧）
+      const knobs = new THREE.Group();
+      for (let i = 0; i < 3; i++) {
+        const k = new THREE.Mesh(geo('stoveKnob', () => new THREE.CylinderGeometry(0.035, 0.035, 0.03, 8)),
+          i === 0 ? mat('red', PAL.red) : mat('wallCap', PAL.wallCap));
+        k.rotation.x = Math.PI / 2;
+        k.position.set(x - 0.2 + i * 0.2, 0.72, z + 0.51);
+        knobs.add(k);
+      }
       const glow = new THREE.Mesh(geo('stoveGlow', () => new THREE.CylinderGeometry(0.34, 0.34, 0.02, 20)),
         new THREE.MeshBasicMaterial({ color: PAL.flame, transparent: true, opacity: 0.0 }));
       glow.position.set(x, topY + 0.045, z);
-      sub.add(plate, dot, pot, glow);
+      sub.add(plate, dot, pot, lid, knobTop, ear1, ear2, knobs, glow);
       spot.pot = pot; spot.glow = glow; spot.stoveId = s.stoveId;
       break;
     }
-    case 'phone': { // 电话台：红色座机
+    case 'phone': { // 电话台：红色座机 + 点单便签
       const base = box(0.34, 0.1, 0.26, mat('red', PAL.red));
       base.position.set(x, topY + 0.05, z);
       const receiver = box(0.3, 0.06, 0.09, mat('red', PAL.red));
       receiver.position.set(x, topY + 0.14, z);
-      sub.add(base, receiver);
+      const note = box(0.18, 0.015, 0.24, mat('ticketPaper', PAL.ticketPaper));
+      note.position.set(x + 0.26, topY + 0.01, z + 0.1);
+      note.rotation.y = -0.25;
+      const pencil = box(0.02, 0.015, 0.16, mat('spiceYolk', PAL.spiceYolk));
+      pencil.position.set(x + 0.3, topY + 0.02, z - 0.12);
+      pencil.rotation.y = 0.5;
+      sub.add(base, receiver, note, pencil);
       spot.receiver = receiver; spot.receiverHome = receiver.position.clone();
       break;
     }
@@ -201,14 +237,20 @@ function buildStation(group, s) {
       spot.valve = valve;
       break;
     }
-    case 'serve': { // 出餐口台面：金属格栅小平台 + 铃铛
+    case 'serve': { // 出餐口台面：金属格栅小平台 + 铃铛 + 待出餐盘 + 餐巾
       const tray = box(0.8, 0.04, 0.5, mat('grate', PAL.grate, { metalness: 0.4, roughness: 0.5 }));
       tray.position.set(x, topY + 0.02, z);
       const bell = new THREE.Mesh(geo('bell', () => new THREE.SphereGeometry(0.12, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2)),
         mat('bellGold', 0xF2C230, { metalness: 0.5, roughness: 0.4 }));
       bell.position.set(x - 0.28, topY + 0.04, z + 0.12);
       bell.castShadow = true;
-      sub.add(tray, bell);
+      // 待出餐的空盘 + 折叠餐巾
+      const dish = new THREE.Mesh(geo('plate', () => new THREE.CylinderGeometry(0.25, 0.22, 0.045, 14)), mat('plate', PAL.plate));
+      dish.position.set(x + 0.2, topY + 0.065, z - 0.08);
+      dish.castShadow = true;
+      const napkin = box(0.2, 0.025, 0.16, mat('towel', PAL.towel));
+      napkin.position.set(x + 0.22, topY + 0.055, z + 0.16);
+      sub.add(tray, bell, dish, napkin);
       spot.bell = bell;
       break;
     }
@@ -239,21 +281,93 @@ function buildStation(group, s) {
       sub.add(sign);
       break;
     }
-    case 'plates': { // 盘子摞
+    case 'plates': { // 盘子摞 + 旁边小碗堆
       for (let i = 0; i < 4; i++) {
         const p = new THREE.Mesh(geo('plate', () => new THREE.CylinderGeometry(0.25, 0.22, 0.045, 14)), mat('plate', PAL.plate));
         p.position.set(x, topY + 0.03 + i * 0.05, z);
         p.castShadow = true;
         sub.add(p);
       }
+      for (let i = 0; i < 2; i++) {
+        const b = new THREE.Mesh(geo('bowl', () => new THREE.CylinderGeometry(0.15, 0.1, 0.09, 12)), mat('board', PAL.board));
+        b.position.set(x + 0.3, topY + 0.05 + i * 0.1, z + 0.28);
+        b.castShadow = true;
+        sub.add(b);
+      }
       break;
     }
-    case 'sink': { // 水池
+    case 'sink': { // 水池 + 弯管水龙头
       const basin = box(0.7, 0.08, 0.6, mat('steelM', PAL.steel, { metalness: 0.35, roughness: 0.5 }));
       basin.position.set(x, topY + 0.02, z);
       const waterM = box(0.6, 0.02, 0.5, mat('water', PAL.water, { roughness: 0.3 }));
       waterM.position.set(x, topY + 0.06, z);
-      sub.add(basin, waterM);
+      const pipe = new THREE.Mesh(geo('faucetPipe', () => new THREE.CylinderGeometry(0.035, 0.035, 0.3, 8)), mat('metal', PAL.metal, { metalness: 0.4, roughness: 0.45 }));
+      pipe.position.set(x, topY + 0.17, z - 0.22);
+      const spout = new THREE.Mesh(geo('faucetSpout', () => new THREE.CylinderGeometry(0.03, 0.03, 0.22, 8)), mat('metal', PAL.metal, { metalness: 0.4, roughness: 0.45 }));
+      spout.rotation.x = Math.PI / 2;
+      spout.position.set(x, topY + 0.3, z - 0.12);
+      sub.add(basin, waterM, pipe, spout);
+      break;
+    }
+    case 'counter': { // 空白台面：按格子坐标确定性摆放生活道具（低模程序化）
+      const v = (s.ix * 7 + s.iz * 13) % 6;
+      if (v === 0) { // 调料瓶三件套
+        const cols = [PAL.spiceRed, PAL.spiceYolk, PAL.spiceGreen];
+        cols.forEach((col, i) => {
+          const jar = new THREE.Mesh(geo('spiceJar', () => new THREE.CylinderGeometry(0.07, 0.075, 0.18, 10)), mat('spice' + i, col, { roughness: 0.55 }));
+          jar.position.set(x - 0.2 + i * 0.2, topY + 0.09, z + (i % 2 ? 0.06 : -0.06));
+          jar.castShadow = true;
+          const cap = new THREE.Mesh(geo('spiceCap', () => new THREE.CylinderGeometry(0.075, 0.075, 0.04, 10)), mat('wallCap', PAL.wallCap));
+          cap.position.set(jar.position.x, topY + 0.2, jar.position.z);
+          sub.add(jar, cap);
+        });
+      } else if (v === 1) { // 面团 + 擀面杖
+        const d1 = new THREE.Mesh(geo('dough', () => new THREE.SphereGeometry(0.1, 10, 8)), mat('dough', PAL.dough, { roughness: 0.95 }));
+        d1.scale.y = 0.6; d1.position.set(x - 0.15, topY + 0.08, z);
+        const d2 = d1.clone(); d2.scale.set(0.75, 0.45, 0.75); d2.position.set(x + 0.12, topY + 0.06, z + 0.15);
+        const pin = new THREE.Mesh(geo('rollPin', () => new THREE.CylinderGeometry(0.045, 0.045, 0.44, 8)), mat('crateWood', PAL.crateWood));
+        pin.rotation.z = Math.PI / 2; pin.rotation.y = 0.4;
+        pin.position.set(x + 0.05, topY + 0.05, z - 0.18);
+        pin.castShadow = true;
+        sub.add(d1, d2, pin);
+      } else if (v === 2) { // 一碗番茄
+        const bowl = new THREE.Mesh(geo('bowl', () => new THREE.CylinderGeometry(0.15, 0.1, 0.09, 12)), mat('red', PAL.red));
+        bowl.position.set(x, topY + 0.05, z);
+        bowl.castShadow = true;
+        sub.add(bowl);
+        for (let i = 0; i < 3; i++) {
+          const t = new THREE.Mesh(geo('tomatoSm', () => new THREE.SphereGeometry(0.06, 8, 6)), mat('tomato', PAL.tomato, { roughness: 0.7 }));
+          t.position.set(x + (i - 1) * 0.09, topY + 0.12 + (i === 1 ? 0.05 : 0), z + (i % 2 ? 0.05 : -0.04));
+          sub.add(t);
+        }
+      } else if (v === 3) { // 翻开的菜谱 + 马克杯
+        const pg1 = box(0.22, 0.02, 0.3, mat('paper', PAL.paper));
+        pg1.position.set(x - 0.1, topY + 0.02, z);
+        pg1.rotation.y = 0.1;
+        const pg2 = pg1.clone(); pg2.position.x = x + 0.1; pg2.rotation.y = -0.1;
+        const mug = new THREE.Mesh(geo('mug', () => new THREE.CylinderGeometry(0.07, 0.06, 0.14, 10)), mat('red', PAL.red));
+        mug.position.set(x + 0.28, topY + 0.07, z + 0.2);
+        mug.castShadow = true;
+        sub.add(pg1, pg2, mug);
+      } else if (v === 4) { // 叠放的抹布 + 刷子
+        const t1 = box(0.3, 0.03, 0.24, mat('towel', PAL.towel));
+        t1.position.set(x - 0.1, topY + 0.015, z);
+        const t2 = box(0.26, 0.03, 0.2, mat('water', PAL.water));
+        t2.position.set(x - 0.08, topY + 0.045, z + 0.02);
+        t2.rotation.y = 0.3;
+        const brush = box(0.16, 0.04, 0.06, mat('crateWood', PAL.crateWood));
+        brush.position.set(x + 0.24, topY + 0.02, z - 0.12);
+        sub.add(t1, t2, brush);
+      } else { // 刀架 + 两把刀
+        const block = box(0.16, 0.24, 0.12, mat('crateWood', PAL.crateWood));
+        block.position.set(x, topY + 0.12, z);
+        block.castShadow = true;
+        const k1 = box(0.02, 0.14, 0.05, mat('knife', PAL.knife, { metalness: 0.4, roughness: 0.5 }));
+        k1.position.set(x - 0.03, topY + 0.28, z);
+        k1.rotation.z = 0.12;
+        const k2 = k1.clone(); k2.position.x = x + 0.04; k2.rotation.z = -0.1;
+        sub.add(block, k1, k2);
+      }
       break;
     }
   }
@@ -271,41 +385,42 @@ export function buildKitchen(scene) {
   const group = new THREE.Group();
   scene.add(group);
 
-  // 地板 12×9 双色暖木相间
-  const floorGeoA = new THREE.BoxGeometry(1, 0.1, 1);
-  for (let iz = 0; iz < GH; iz++) {
-    for (let ix = 0; ix < GW; ix++) {
-      const light = (ix + iz) % 2 === 0;
-      const tile = new THREE.Mesh(floorGeoA, mat(light ? 'floorL' : 'floorD', light ? PAL.floorLight : PAL.floorDark));
-      const { x, z } = cellToWorld(ix, iz);
-      tile.position.set(x, -0.05, z);
-      tile.receiveShadow = true;
-      group.add(tile);
-    }
-  }
-  // 厨房外大地面（压暗）
-  const outer = new THREE.Mesh(new THREE.PlaneGeometry(60, 60), mat('outer', PAL.groundOut));
+  // 地板：单块贴图盒（棋盘格 + 每格色差 + 磨损斑，替代 108 块独立地砖）
+  const floorTex = floorTexture(GW, GH, { light: PAL.floorLight, dark: PAL.floorDark, grout: PAL.wallCap });
+  const floorTop = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.92, metalness: 0 });
+  const floorSide = mat('floorEdge', PAL.floorEdge);
+  const floor = new THREE.Mesh(new THREE.BoxGeometry(GW, 0.1, GH),
+    [floorSide, floorSide, floorTop, floorSide, floorSide, floorSide]);
+  floor.position.set(0, -0.05, 0);
+  floor.receiveShadow = true;
+  group.add(floor);
+  // 厨房外大地面（径向压暗，避免发灰发平）
+  const outer = new THREE.Mesh(new THREE.PlaneGeometry(60, 60),
+    new THREE.MeshStandardMaterial({ map: outerGroundTexture({ inner: PAL.groundOut, outer: 0x2E1F13 }), roughness: 1 }));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.12;
   outer.receiveShadow = true;
   group.add(outer);
 
-  // 矮墙（高 1.5、厚 0.3、带压顶），南墙留门
+  // 墙体：北墙 3.2 高暖砖墙（挂饰舞台），东西墙 1.7 灰泥，南墙 1.5（不挡相机），均带压顶
   const wallMat = mat('wall', PAL.wall);
   const capMat = mat('wallCap', PAL.wallCap);
-  const mkWall = (x, z, w, d) => {
-    const wall = box(w, 1.5, d, wallMat);
-    wall.position.set(x, 0.75, z);
+  const brickTex = brickTexture({ a: PAL.brickA, b: PAL.brickB, mortar: PAL.mortar });
+  brickTex.repeat.set(5, 2.2);
+  const brickMat = new THREE.MeshStandardMaterial({ map: brickTex, roughness: 0.95, metalness: 0 });
+  const mkWall = (x, z, w, d, h = 1.7, m = wallMat) => {
+    const wall = box(w, h, d, m);
+    wall.position.set(x, h / 2, z);
     const cap = box(w + 0.06, 0.1, d + 0.06, capMat);
-    cap.position.set(x, 1.55, z);
+    cap.position.set(x, h + 0.05, z);
     group.add(wall, cap);
   };
   const N = -(GH - 1) / 2 - 0.66, S = (GH - 1) / 2 + 0.66, W = -(GW - 1) / 2 - 0.66, E = (GW - 1) / 2 + 0.66;
-  mkWall(0, N, GW + 1.3, 0.3);            // 北墙
-  mkWall(W, 0, 0.3, GH + 1.3);            // 西墙
-  mkWall(E, 0, 0.3, GH + 1.3);            // 东墙
-  mkWall(-3.75, S, 5.5, 0.3);             // 南墙左段（门洞 x∈[-1,1]）
-  mkWall(3.75, S, 5.5, 0.3);              // 南墙右段
+  mkWall(0, N, GW + 1.3, 0.3, 3.2, brickMat); // 北墙·高砖墙
+  mkWall(W, 0, 0.3, GH + 1.3, 1.7);           // 西墙
+  mkWall(E, 0, 0.3, GH + 1.3, 1.7);           // 东墙
+  mkWall(-3.75, S, 5.5, 0.3, 1.5);            // 南墙左段（门洞 x∈[-1,1]）
+  mkWall(3.75, S, 5.5, 0.3, 1.5);             // 南墙右段
   // 门框 + 门垫
   const post1 = box(0.24, 2.0, 0.34, mat('frameWood', PAL.frameWood));
   post1.position.set(-1.12, 1.0, S);
@@ -321,9 +436,9 @@ export function buildKitchen(scene) {
   doorIcon.position.set(0, 2.45, S + 0.2);
   group.add(doorIcon);
 
-  // 出餐口窗洞（北墙中央上方窗框 + 格栅）
+  // 出餐口窗洞（挂在北墙内侧面：北墙已加高为 3.2，窗框须贴在墙面而非埋进墙里）
   const win = new THREE.Group();
-  const winZ = N + 0.05;
+  const winZ = N + 0.15 + 0.1;      // 窗框中心：内侧面(N+0.15)前方
   const mkBar = (w, h, px, py) => {
     const b = box(w, h, 0.18, mat('frameWood', PAL.frameWood));
     b.position.set(px, py, winZ);
@@ -334,12 +449,12 @@ export function buildKitchen(scene) {
   mkBar(0.16, 1.2, -1.12, 1.54);     // 左框
   mkBar(0.16, 1.2, 1.12, 1.54);      // 右框
   const hole = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 0.9),
-    new THREE.MeshBasicMaterial({ color: 0x120D18 }));
-  hole.position.set(0, 1.54, winZ - 0.1);
+    new THREE.MeshBasicMaterial({ color: 0x1A1008 })); // 暖黑洞口（禁蓝紫）
+  hole.position.set(0, 1.54, N + 0.15 + 0.005);
   win.add(hole);
   for (let i = 0; i < 3; i++) { // 金属格栅竖条
     const bar = box(0.05, 0.9, 0.05, mat('grate', PAL.grate, { metalness: 0.4 }));
-    bar.position.set(-0.5 + i * 0.5, 1.54, winZ - 0.02);
+    bar.position.set(-0.5 + i * 0.5, 1.54, winZ + 0.04);
     win.add(bar);
   }
   group.add(win);

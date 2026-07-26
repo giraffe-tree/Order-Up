@@ -1,4 +1,6 @@
 // 厨师角色：二头身 Q 版（大厨帽≈身体体积）、名字精灵、动作气泡、动画状态机
+// 个性系统：待机小动作（东张西望/擦汗/颠勺）、走路手臂摆动、程序化眼睛（眼神/眨眼/眯眼）
+// 名牌使用 THREE.Sprite —— 天然始终面向镜头
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL } from './palette.js';
 import { nameTexture, bubbleTexture, makeSprite } from './textures.js';
@@ -16,7 +18,7 @@ export class ChefActor {
     this.fx = fx;
     this.color = new THREE.Color(chef.color || '#447EE0');
     this.group = new THREE.Group();
-    this.state = 'enter';        // enter|walk|work|think|burn|sleep|sit
+    this.state = 'enter';        // enter|walk|work|think|burn|sleep|sit|rest
     this.path = [];
     this.onArrive = null;
     this.arriveAction = null;
@@ -27,6 +29,10 @@ export class ChefActor {
     this.workKind = null;
     this.station = null;
     this.cellPos = { x: 0, z: 0 };
+    // 个性状态：眼神游移 / 眨眼 / 待机小动作（各厨师相位随机，避免全场同步）
+    this._glance = { t: 1.5 + Math.random() * 3, active: false, yaw: 0 };
+    this._blinkT = 1.5 + Math.random() * 3.5;
+    this._idle = { t: 3 + Math.random() * 7, kind: null, phase: 0 };
     this._build();
   }
 
@@ -65,13 +71,20 @@ export class ChefActor {
     face.position.set(0, 0.72, 0.1);
     face.castShadow = true;
     this.body.add(face);
-    // 眼睛
+    // 眼睛组：整体可左右转动（眼神朝向）、scale.y 压缩做眨眼/眯眼
     const eyeMat = new THREE.MeshBasicMaterial({ color: 0x2A2138 });
+    const hlMat = new THREE.MeshBasicMaterial({ color: 0xFFFDF6 });
+    this.eyeGroup = new THREE.Group();
+    this.eyeGroup.position.set(0, 0.75, 0.22);
     for (const dx of [-0.06, 0.06]) {
       const eye = new THREE.Mesh(geo('eye', () => new THREE.SphereGeometry(0.025, 6, 5)), eyeMat);
-      eye.position.set(dx, 0.75, 0.25);
-      this.body.add(eye);
+      eye.position.set(dx, 0, 0.03);
+      // 高光小点让眼睛更有神
+      const hl = new THREE.Mesh(geo('eyeHL', () => new THREE.SphereGeometry(0.009, 4, 3)), hlMat);
+      hl.position.set(dx + 0.012, 0.012, 0.048);
+      this.eyeGroup.add(eye, hl);
     }
+    this.body.add(this.eyeGroup);
     // 手臂 + 白手套
     this.armL = new THREE.Group(); this.armR = new THREE.Group();
     this.armL.position.set(-0.3, 0.52, 0); this.armR.position.set(0.3, 0.52, 0);
@@ -109,7 +122,7 @@ export class ChefActor {
     this.hat.add(brim, band, shade, dome);
     this.body.add(this.hat);
 
-    // 头顶名字精灵
+    // 头顶名字精灵（Sprite 自动面向镜头，任何角度都可读）
     this.nameSprite = makeSprite(nameTexture(this.name, '#' + c.getHexString()), 1.1, 0.28);
     this.nameSprite.position.y = 1.45;
     this.group.add(this.nameSprite);
@@ -178,6 +191,8 @@ export class ChefActor {
     this.state = 'work';
     this.workKind = kind;
     this.station = station || null;
+    this._ringAcc = 0;
+    this._popAcc = 0;
     this.setBubble(label || null);
     this.setMark(null);
     if (station && station.face) {
@@ -199,7 +214,8 @@ export class ChefActor {
     this.animT = 0;
     this.setMark('💥');
     this.setBubble(label || '糊了！');
-    this.fx.burst('smoke', { x: this.group.position.x, y: 0.9, z: this.group.position.z }, 14, 1.2, 1.4);
+    // 浓烟 + 火星迸发（fx.burnBurst）
+    this.fx.burnBurst({ x: this.group.position.x, y: 0.9, z: this.group.position.z });
     this._smokeAcc = 0;
   }
 
@@ -235,6 +251,9 @@ export class ChefActor {
     this.station = null;
     this.path = [];
     this.onArrive = null;
+    this._idle.kind = null;
+    this._idle.t = 3 + Math.random() * 6;
+    this._glance.active = false;
     this.resetPose();
     if (this._zzz) for (const zz of this._zzz) { zz.s.visible = false; zz.t = 99; }
   }
@@ -255,6 +274,9 @@ export class ChefActor {
     while (dy < -Math.PI) dy += Math.PI * 2;
     this.group.rotation.y += dy * Math.min(1, dt * 10);
 
+    // 眼睛：眨眼 + 眼神游移（程序化脸部）
+    this._updateEyes(dt);
+
     switch (this.state) {
       case 'walk': case 'enter': {
         if (!this.path.length) { this._arrive(); break; }
@@ -272,11 +294,13 @@ export class ChefActor {
           this.faceY = Math.atan2(dx, dz);
         }
         this.cellPos = { x: pos.x, z: pos.z };
-        // 小碎步：上下颠簸 + 挤压拉伸
+        // 小碎步：上下颠簸 + 挤压拉伸 + 手臂前后摆动
         const ph = t * (this.state === 'enter' ? 14 : 11);
         const s = Math.abs(Math.sin(ph));
         pos.y = s * 0.07;
         this.body.scale.set(1 + 0.08 * s, 1 - 0.12 * s, 1 + 0.08 * s);
+        this.armL.rotation.x = Math.sin(ph) * 0.55;
+        this.armR.rotation.x = -Math.sin(ph) * 0.55;
         // 身后白色小方块烟尘
         this.stepAcc += dt;
         if (this.stepAcc > 0.16) {
@@ -290,20 +314,32 @@ export class ChefActor {
         const k = this.workKind;
         // 2-4 帧干活循环
         const frame = Math.floor(t / 0.14) % 4;
-        if (k === 'edit') { // 切菜：高频小幅抖动 + 白色哒哒粒子
+        if (k === 'edit') { // 切菜：高频小幅抖动 + 彩色菜屑飞溅
           this.body.rotation.x = (frame % 2) * 0.08;
           this.body.position.x = (frame % 2 ? 0.02 : -0.02);
           this.armR.rotation.x = frame % 2 ? -1.6 : -0.4;
           if (frame === 1 && this.station) {
-            this.fx.burst('chop', { x: this.station.x, y: this.station.topY + 0.1, z: this.station.z }, 2, 0.9, 0.8);
+            this.fx.burst('chip', { x: this.station.x, y: this.station.topY + 0.1, z: this.station.z }, 2, 0.9, 0.8);
           }
-        } else if (k === 'exec') { // 上灶：翻炒
+        } else if (k === 'exec') { // 上灶：翻炒 + 不时蹦出火星
           this.armL.rotation.x = this.armR.rotation.x = -0.9 + Math.sin(t * 9) * 0.35;
           this.body.rotation.x = 0.06 + Math.sin(t * 9) * 0.03;
-        } else if (k === 'search') { // 打电话：听筒举起
+          this._popAcc += dt;
+          if (this._popAcc > 0.5 && this.station) {
+            this._popAcc = 0;
+            this.fx.spawn('spark',
+              this.station.x + (Math.random() - 0.5) * 0.2, this.station.topY + 0.25, this.station.z,
+              0, 1.8, 0, 0.9);
+          }
+        } else if (k === 'search') { // 打电话：听筒举起 + 台面声波圈
           this.armR.rotation.x = -2.4;
           this.body.rotation.z = Math.sin(t * 3) * 0.05;
           pos.y = Math.abs(Math.sin(t * 5)) * 0.02;
+          this._ringAcc += dt;
+          if (this._ringAcc > 0.85 && this.station) {
+            this._ringAcc = 0;
+            this.fx.ringWave({ x: this.station.x, y: this.station.topY + 0.06, z: this.station.z }, 3);
+          }
         } else if (k === 'tool') { // 高压锅：盯住泄压阀
           this.body.rotation.x = 0.1 + Math.sin(t * 6) * 0.04;
           this.armL.rotation.x = this.armR.rotation.x = -0.5;
@@ -324,13 +360,16 @@ export class ChefActor {
         if (this.mark) this.mark.position.y = 1.9 + Math.sin(t * 2) * 0.05;
         break;
       }
-      case 'burn': { // 慌乱原地跳 + 灰烟粒子柱
+      case 'burn': { // 慌乱原地跳 + 灰烟柱 + 零星火星
         pos.y = Math.abs(Math.sin(t * 12)) * 0.08;
         this.body.rotation.z = Math.sin(t * 12) * 0.1;
         this._smokeAcc += dt;
         if (this._smokeAcc > 0.08) {
           this._smokeAcc = 0;
           this.fx.spawn('smoke', pos.x + (Math.random() - 0.5) * 0.2, 1.0, pos.z + (Math.random() - 0.5) * 0.2, 0, 1.6, 0, 1.2);
+          if (Math.random() < 0.3) {
+            this.fx.spawn('ember', pos.x + (Math.random() - 0.5) * 0.2, 0.6, pos.z + (Math.random() - 0.5) * 0.2, 0, 2.0, 0, 1);
+          }
         }
         break;
       }
@@ -353,23 +392,96 @@ export class ChefActor {
         pos.y = 0;
         break;
       }
-      default: { // rest 站立
+      default: { // rest 站立：呼吸 + 待机小动作（东张西望/擦汗/颠勺）
         pos.y = 0;
         this.body.scale.set(1, 1 + Math.sin(t * 2.2) * 0.02, 1);
+        this._updateIdle(dt);
+        break;
       }
     }
-    // 名字牌 / 气泡随身体轻轻浮动
+    // 名字牌 / 气泡随身体轻轻浮动（名牌为 Sprite，始终面向镜头）
     if (this.bubble) this.bubble.position.y = 1.86 + Math.sin(t * 3) * 0.03;
+  }
+
+  // 眼睛：周期性眨眼；休息/思考/打瞌睡时眼神左右游移；打瞌睡眯成一条缝
+  _updateEyes(dt) {
+    if (!this.eyeGroup) return;
+    // 眨眼（sleep 状态常眯眼，跳过眨眼逻辑）
+    if (this.state === 'sleep' || this.state === 'sit') {
+      this.eyeGroup.scale.y += (0.15 - this.eyeGroup.scale.y) * Math.min(1, dt * 8);
+    } else {
+      this._blinkT -= dt;
+      if (this._blinkT < 0) this._blinkT = 2.5 + Math.random() * 3.5;
+      const target = this._blinkT < 0.12 ? 0.12 : 1;
+      this.eyeGroup.scale.y += (target - this.eyeGroup.scale.y) * Math.min(1, dt * 22);
+    }
+    // 眼神游移
+    const canGlance = this.state === 'rest' || this.state === 'think' || this.state === 'sleep';
+    if (canGlance) {
+      this._glance.t -= dt;
+      if (this._glance.t <= 0) {
+        this._glance.t = 1.4 + Math.random() * 3.0;
+        this._glance.active = !this._glance.active || Math.random() < 0.55;
+        this._glance.yaw = (Math.random() - 0.5) * 0.9;
+      }
+    }
+    const targetYaw = (canGlance && this._glance.active) ? this._glance.yaw : 0;
+    this.eyeGroup.rotation.y += (targetYaw - this.eyeGroup.rotation.y) * Math.min(1, dt * 8);
+  }
+
+  // 待机小动作：东张西望 / 擦汗 / 颠勺（仅 rest 状态调用）
+  _updateIdle(dt) {
+    const I = this._idle;
+    if (!I.kind) {
+      I.t -= dt;
+      if (I.t <= 0) {
+        const kinds = ['look', 'look', 'sweat', 'toss']; // 东张西望最常见
+        I.kind = kinds[(Math.random() * kinds.length) | 0];
+        I.phase = 0;
+        this._sweatPopped = false;
+        this._tossPopped = 0;
+      }
+      return;
+    }
+    const dur = { look: 1.8, sweat: 1.3, toss: 1.5 }[I.kind];
+    const u = I.phase / dur;
+    I.phase += dt;
+    const pos = this.group.position;
+    if (I.kind === 'look') {
+      // 东张西望：身体左右转动找事做
+      this.body.rotation.y = Math.sin(u * Math.PI * 2) * 0.5;
+    } else if (I.kind === 'sweat') {
+      // 擦汗：右手举到额头来回抹，甩出一滴汗
+      this.armR.rotation.x = -2.5 + Math.sin(I.phase * 14) * 0.18;
+      this.armR.rotation.z = 0.3;
+      this.body.rotation.x = 0.06;
+      if (!this._sweatPopped && I.phase > 0.4) {
+        this._sweatPopped = true;
+        this.fx.spawn('sweat', pos.x + 0.3, 1.0, pos.z, 0.9, 1.4, 0, 0.9);
+      }
+    } else if (I.kind === 'toss') {
+      // 颠勺：蹲起抛锅 + 双手上扬，迸两点火星
+      const s = Math.sin(u * Math.PI);
+      pos.y = s * 0.12;
+      this.armL.rotation.x = this.armR.rotation.x = -0.9 - s * 1.4;
+      this.body.rotation.x = 0.08 - s * 0.05;
+      if (this._tossPopped < 2 && I.phase > dur * (0.3 + this._tossPopped * 0.35)) {
+        this._tossPopped++;
+        const fy = this.group.rotation.y;
+        this.fx.spawn('spark', pos.x + Math.sin(fy) * 0.45, 1.0, pos.z + Math.cos(fy) * 0.45, 0, 2.2, 0, 1);
+      }
+    }
+    if (I.phase >= dur) {
+      I.kind = null;
+      I.t = 6 + Math.random() * 8; // 下一个小动作 6-14 秒后
+      this.resetPose();
+    }
   }
 
   _arrive() {
     this.state = 'rest';
-    this.body.scale.set(1, 1, 1);
-    this.body.rotation.set(0, 0, 0);
-    this.body.position.x = 0;
-    this.group.position.y = 0;
-    this.armL.rotation.set(0, 0, 0);
-    this.armR.rotation.set(0, 0, 0);
+    this._idle.t = 3 + Math.random() * 7;
+    this.resetPose();
     const cb = this.onArrive, act = this.arriveAction;
     this.onArrive = null; this.arriveAction = null;
     if (cb) cb(act);
@@ -418,6 +530,7 @@ export class ChefActor {
     this.group.position.y = 0;
     this.armL.rotation.set(0, 0, 0);
     this.armR.rotation.set(0, 0, 0);
+    if (this.eyeGroup) this.eyeGroup.rotation.y = 0;
   }
 
   dispose(scene) {

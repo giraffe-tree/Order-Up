@@ -5,6 +5,11 @@ import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
 
+// 单次读取上限：超大文件分多次消化，避免一次性把几百 MB 读进内存
+const MAX_READ_BYTES = 8 * 1024 * 1024;
+// 单行上限：写入中的半截行会暂存在 pending，防止异常长行撑爆内存
+const MAX_LINE_BYTES = 2 * 1024 * 1024;
+
 export class SessionWatcher {
   constructor({
     dir,
@@ -123,13 +128,16 @@ export class SessionWatcher {
         this.files.set(f.path, { offset: 0, pending: Buffer.alloc(0), threadId: null, live: true });
       }
     }
-    for (const f of list) {
-      const st = this.files.get(f.path);
-      if (!st) continue;
+    // 遍历「已跟踪」的文件（而非本次扫描结果），这样被删除的文件也能被察觉
+    for (const [fpath, st] of this.files) {
       try {
-        const s = await fsp.stat(f.path);
-        if (s.size !== st.offset) await this._readMore(f.path, s.mtimeMs);
-      } catch { /* 文件可能被清理 */ }
+        const s = await fsp.stat(fpath);
+        if (s.size !== st.offset) await this._readMore(fpath, s.mtimeMs);
+      } catch {
+        // 文件被删除/轮转：摘掉跟踪状态；同名文件若重建会被当作新文件从头读
+        this.files.delete(fpath);
+        this.known.delete(fpath);
+      }
     }
   }
 
@@ -149,16 +157,18 @@ export class SessionWatcher {
     const fh = await fsp.open(file, 'r');
     try {
       const { size } = await fh.stat();
-      if (size < st.offset) { st.offset = 0; st.pending = Buffer.alloc(0); } // 文件被截断
+      if (size < st.offset) { st.offset = 0; st.pending = Buffer.alloc(0); } // 文件被截断/轮转
       if (size === st.offset) {
         if (st.threadId) this.store.touchThread(st.threadId, mtimeMs || Date.now());
         return;
       }
-      const len = size - st.offset;
+      // 超大文件分块消化：本次最多读 MAX_READ_BYTES，剩余部分下轮 poll/watch 继续
+      const len = Math.min(size - st.offset, MAX_READ_BYTES);
       const buf = Buffer.alloc(len);
-      await fh.read(buf, 0, len, st.offset);
-      st.offset = size;
-      const data = st.pending.length ? Buffer.concat([st.pending, buf]) : buf;
+      const { bytesRead } = await fh.read(buf, 0, len, st.offset);
+      st.offset += bytesRead;
+      if (bytesRead <= 0) return;
+      const data = st.pending.length ? Buffer.concat([st.pending, buf.subarray(0, bytesRead)]) : buf.subarray(0, bytesRead);
       let start = 0;
       for (let i = 0; i < data.length; i++) {
         if (data[i] === 0x0a) {
@@ -166,14 +176,17 @@ export class SessionWatcher {
           start = i + 1;
           if (!line) continue;
           let obj;
-          try { obj = JSON.parse(line); } catch { continue; }
+          try { obj = JSON.parse(line); } catch { continue; } // 坏行跳过
           try { this.store.processLine(obj, st); } catch { /* 单行错误不阻塞 */ }
         }
       }
       st.pending = data.subarray(start);
+      // 半截行（写入中）暂存 pending；但若 pending 超过单行上限，
+      // 说明该行异常（或无换行的垃圾数据），丢弃以防内存膨胀
+      if (st.pending.length > MAX_LINE_BYTES) st.pending = Buffer.alloc(0);
       if (st.threadId) this.store.touchThread(st.threadId, mtimeMs || Date.now());
     } finally {
-      await fh.close();
+      await fh.close().catch(() => {});
     }
   }
 }

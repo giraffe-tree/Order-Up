@@ -554,3 +554,271 @@ button { font-family: inherit; cursor: pointer; }
   white-space: pre-wrap;
   max-width: 90vw;
 }
+
+/* ---------------- 顶栏圆形按钮（音效 / 帮助） ---------------- */
+.top-btn {
+  flex: 0 0 auto;
+  width: 34px; height: 34px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 16px;
+  font-weight: 900;
+  color: var(--ink);
+  background: var(--counter);
+  border: 3px solid #3A2415;
+  border-radius: 50%;
+  box-shadow: 0 3px 0 #3A2415;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.top-btn:hover { background: var(--gold); }
+.top-btn:active { transform: translateY(3px); box-shadow: 0 0 0 #3A2415; }
+.top-btn[hidden] { display: none; }
+
+/* ---------------- 断线提示（顶栏指示灯脉冲 + 舞台横幅） ---------------- */
+.conn.bad {
+  animation: conn-pulse 1.1s ease-in-out infinite;
+  border-color: rgba(217, 79, 61, 0.8);
+}
+@keyframes conn-pulse {
+  0%, 100% { background: rgba(245, 235, 215, 0.12); }
+  50% { background: rgba(217, 79, 61, 0.45); }
+}
+
+.conn-banner {
+  position: absolute;
+  top: 12px; left: 50%;
+  transform: translateX(-50%);
+  z-index: 4;
+  font-size: 13px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--red);
+  border: 3px solid var(--ink);
+  border-radius: 999px;
+  padding: 5px 16px;
+  box-shadow: 0 4px 0 var(--ink);
+  animation: conn-banner-bob 1.2s ease-in-out infinite;
+  pointer-events: none;
+  white-space: nowrap;
+}
+.conn-banner[hidden] { display: none; }
+@keyframes conn-banner-bob {
+  0%, 100% { transform: translateX(-50%) translateY(0); }
+  50% { transform: translateX(-50%) translateY(-4px); }
+}
+
+/* ---------------- 空态引导（纯 CSS/DOM 插画式提示） ---------------- */
+.stage-empty { pointer-events: auto; }
+.stage-empty[hidden] { display: none; }
+
+.empty-card {
+  max-width: 520px;
+  margin: 16px;
+  padding: 22px 26px 20px;
+  text-align: center;
+  background: var(--paper);
+  color: var(--ink);
+  text-shadow: none;
+  border: 4px dashed var(--wood);
+  border-radius: 22px;
+  box-shadow: 0 8px 0 rgba(42, 33, 56, 0.55);
+}
+.empty-scene {
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  gap: 14px;
+  font-size: 44px;
+  margin-bottom: 8px;
+}
+.empty-chef { display: inline-block; animation: empty-idle 1.6s ease-in-out infinite; }
+.empty-pot { display: inline-block; font-size: 52px; }
+.empty-z { display: inline-block; font-size: 24px; animation: empty-z-float 2.2s ease-in-out infinite; }
+@keyframes empty-idle {
+  0%, 100% { transform: translateY(0) rotate(-3deg); }
+  50% { transform: translateY(-6px) rotate(3deg); }
+}
+@keyframes empty-z-float {
+  0% { transform: translateY(4px); opacity: 0.3; }
+  50% { transform: translateY(-8px); opacity: 1; }
+  100% { transform: translateY(4px); opacity: 0.3; }
+}
+.empty-card h2 {
+  font-size: 20px;
+  font-weight: 900;
+  margin-bottom: 8px;
+}
+.empty-card p {
+  font-size: 13px;
+  font-weight: 700;
+  color: var(--wood);
+  margin-bottom: 8px;
+}
+.empty-or { color: var(--stone); margin: 10px 0 8px; }
+.empty-cmd {
+  display: inline-block;
+  font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--paper);
+  background: var(--ink);
+  border-radius: 8px;
+  padding: 4px 10px;
+  margin: 2px 3px;
+  user-select: text;
+}
+.empty-actions { display: flex; flex-direction: column; align-items: center; gap: 4px; }
+
+/* ---------------- 订单流水：事件类型过滤 chips ---------------- */
+.feed-kinds {
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  padding: 8px 12px 4px;
+  background: var(--wood);
+  border-top: 2px solid rgba(58, 36, 21, 0.5);
+}
+.feed-kinds button {
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--paper);
+  background: rgba(245, 235, 215, 0.12);
+  border: 2px solid rgba(245, 235, 215, 0.3);
+  border-radius: 999px;
+  padding: 2px 9px;
+}
+.feed-kinds button:hover { background: rgba(245, 235, 215, 0.25); }
+.feed-kinds button.on {
+  color: var(--ink);
+  background: var(--gold);
+  border-color: var(--ink);
+  box-shadow: 0 2px 0 #3A2415;
+}
+
+/* ---------------- 订单票：新事件动画 / 长 detail 展开 ---------------- */
+/* 已渲染过的票卡不再重复播放入场动画（仅新事件入场） */
+.ticket.seen { animation: none; }
+
+.ticket.has-long .t-detail { cursor: pointer; }
+.ticket.has-long .t-detail::after {
+  content: " ▸";
+  color: var(--stone);
+  font-weight: 900;
+}
+.ticket.open .t-detail {
+  white-space: normal;
+  word-break: break-all;
+  overflow: visible;
+}
+.ticket.open .t-detail::after { content: " ▾"; }
+
+/* ---------------- 歇业厨房卡片置灰 ---------------- */
+.sw-card.closed {
+  filter: grayscale(0.8) brightness(0.86);
+  opacity: 0.75;
+}
+.sw-card.closed:hover { filter: grayscale(0.5) brightness(0.92); opacity: 0.9; }
+.sw-card.closed.on { filter: grayscale(0.4) brightness(0.95); opacity: 1; }
+.sw-card .closed-tag {
+  position: absolute;
+  top: -9px; left: -7px;
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--wood);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  padding: 1px 6px;
+  box-shadow: 0 2px 0 var(--ink);
+  transform: rotate(-6deg);
+}
+
+/* ---------------- 首次引导浮层 ---------------- */
+.guide-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(36, 28, 46, 0.72);
+  padding: 20px;
+}
+.guide-overlay[hidden] { display: none; }
+
+.guide-card {
+  width: min(560px, 94vw);
+  max-height: 88vh;
+  overflow-y: auto;
+  background: var(--paper);
+  border: 4px solid var(--ink);
+  border-radius: 22px;
+  box-shadow: 0 10px 0 rgba(0, 0, 0, 0.4);
+  padding: 24px 28px 22px;
+  animation: guide-pop 0.28s ease-out;
+}
+@keyframes guide-pop {
+  0% { transform: scale(0.85) translateY(16px); opacity: 0; }
+  100% { transform: scale(1) translateY(0); opacity: 1; }
+}
+.guide-card h2 {
+  font-size: 21px;
+  font-weight: 900;
+  margin-bottom: 10px;
+}
+.guide-card h3 {
+  font-size: 14px;
+  font-weight: 900;
+  color: var(--red);
+  margin: 14px 0 6px;
+}
+.guide-intro {
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.7;
+  color: var(--wood);
+}
+.guide-list, .guide-keys {
+  list-style: none;
+  font-size: 12.5px;
+  font-weight: 700;
+  line-height: 2;
+  color: var(--ink);
+}
+.guide-keys kbd {
+  display: inline-block;
+  min-width: 22px;
+  text-align: center;
+  font-family: inherit;
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--wood);
+  border: 2px solid #3A2415;
+  border-radius: 6px;
+  box-shadow: 0 2px 0 #3A2415;
+  padding: 0 5px;
+}
+.guide-start {
+  display: block;
+  width: 100%;
+  margin-top: 18px;
+  font-size: 17px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--red);
+  border: 3px solid var(--ink);
+  border-radius: 14px;
+  box-shadow: 0 5px 0 var(--ink);
+  padding: 10px 0;
+  transition: transform 0.08s, box-shadow 0.08s;
+}
+.guide-start:hover { background: #e2604f; }
+.guide-start:active { transform: translateY(4px); box-shadow: 0 1px 0 var(--ink); }
+
+@media (max-width: 900px) {
+  .top-btn { width: 30px; height: 30px; font-size: 14px; }
+  .guide-card { padding: 18px 20px; }
+}

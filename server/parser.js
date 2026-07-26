@@ -159,7 +159,9 @@ export class KitchenStore {
     for (const k of this.kitchens.values()) {
       k.active = k.lastWrite > 0 ? (now - k.lastWrite < 10 * 60 * 1000) : k.active;
       for (const chef of k.chefs) {
-        if (chef.status === 'cooking' && now - (chef.lastAction?.ts || 0) > 5000) {
+        // cooking 与 done（出餐后定格）都要能回 idle，否则厨师出完餐永远罚站
+        if ((chef.status === 'cooking' || chef.status === 'done') &&
+            now - (chef.lastAction?.ts || 0) > 5000) {
           // 先发 idle 动作（契约 action.kind 含 idle），再发 chef_status
           this.action(k.id, chef.id, 'idle', '歇口气', '忙完一阵，擦擦手待命', now);
         }
@@ -232,8 +234,11 @@ export class KitchenStore {
     }
     this.threadKitchen.set(threadId, kitchenId);
     const depth = spawn?.depth ?? 0;
+    // 命名兜底链：昵称 → 根线程用会话标题/目录名 → 子线程用工种名（agent_path 末段）→ 短 id
     const name = p.agent_nickname || spawn?.agent_nickname ||
-      (depth === 0 ? '主厨 ' + String(threadId).slice(-4) : '厨师 ' + String(threadId).slice(-4));
+      (depth === 0
+        ? (this.threadNames.get(threadId) || (cwd ? base(cwd) : '') || '主厨 ' + String(threadId).slice(-4))
+        : (base(spawn?.agent_path) || '厨师 ' + String(threadId).slice(-4)));
     const role = spawn?.agent_role ?? null;
     this.upsertChef(kitchenId, { id: threadId, name, role, depth }, { live });
   }
@@ -241,8 +246,12 @@ export class KitchenStore {
   // fileState: { threadId, live }
   processLine(obj, fileState) {
     if (!obj || typeof obj !== 'object') return;
-    const ts = Date.parse(obj.timestamp) || Date.now();
-    const p = obj.payload || {};
+    // timestamp 可能是 ISO 字符串或毫秒数字
+    const rawTs = obj.timestamp;
+    const ts = (typeof rawTs === 'number' && Number.isFinite(rawTs)) ? rawTs
+      : (Date.parse(rawTs) || Date.now());
+    // payload 偶尔可能是字符串等非对象，统一兜底为 {}
+    const p = (obj.payload && typeof obj.payload === 'object') ? obj.payload : {};
     const live = fileState ? fileState.live : true;
     if (obj.type === 'session_meta') {
       this.processMeta(p, ts, live);
@@ -253,7 +262,11 @@ export class KitchenStore {
     if (!threadId) return;
     if (obj.type === 'event_msg') this._eventMsg(p, ts, threadId, live);
     else if (obj.type === 'response_item') this._responseItem(p, ts, threadId, live);
-    // turn_context / world_state / compacted 等忽略
+    // 其余顶层类型按语义忽略（基于本机最近 30 个真实会话抽样核实）：
+    // - turn_context / world_state：每回合的 cwd/模型/权限快照，无动作语义；
+    // - compacted：上下文压缩后的替换历史，伴随的 event_msg(context_compacted) 已单独映射；
+    // - inter_agent_communication_metadata：跨 agent 消息的信封元数据（正文加密），
+    //   协作语义已由 spawn_agent / send_message / sub_agent_activity 覆盖。
   }
 
   _locate(threadId) {
@@ -286,13 +299,15 @@ export class KitchenStore {
         this._act(p, ts, threadId, live, 'think', '开工', '接到新订单，开始干活');
         break;
       case 'task_complete': {
+        // 菜名兜底链：最后一条消息首行 → 线程标题 → 厨房名 → 第 N 道菜
         const first = trunc(String(p.last_agent_message || '').split('\n')[0], 24);
-        this._act(p, ts, threadId, live, 'serve', '出餐', first || '任务完成，上菜');
+        const fallback = this.threadNames.get(threadId) || '';
+        this._act(p, ts, threadId, live, 'serve', '出餐', first || fallback || '任务完成，上菜');
         if (live) {
           const kid = this.threadKitchen.get(threadId);
           const k = kid && this.kitchens.get(kid);
           const chef = k?.chefs.find((c) => c.id === threadId);
-          if (k && chef) this.serve(kid, threadId, first || `第 ${k.servedCount + 1} 道菜`, ts);
+          if (k && chef) this.serve(kid, threadId, first || fallback || k.name || `第 ${k.servedCount + 1} 道菜`, ts);
         }
         break;
       }
@@ -321,9 +336,14 @@ export class KitchenStore {
         }
         break;
       }
-      case 'exec_command_begin':
-        this._act(p, ts, threadId, live, 'exec', '开火上灶', p.command || p.cmd || '执行命令');
+      case 'exec_command_begin': {
+        // 旧版 codex 的 command 是 argv 数组，新版是字符串
+        const cmd = Array.isArray(p.command) ? p.command.join(' ') : (p.command || p.cmd);
+        // 与 response_item 路径一致：只读命令分流到案板，避免 cat/rg 被误标「开火」
+        if (cmd && READ_CMD_RE.test(cmd.trim())) this._act(p, ts, threadId, live, 'read', '看菜谱', cmd);
+        else this._act(p, ts, threadId, live, 'exec', '开火上灶', cmd || '执行命令');
         break;
+      }
       case 'web_search_end':
         this._act(p, ts, threadId, live, 'search', '打电话订食材', p.query || '搜索资料');
         break;
@@ -335,10 +355,27 @@ export class KitchenStore {
       case 'sub_agent_activity':
         if (p.kind === 'started') {
           this._act(p, ts, threadId, live, 'join', '派出小厨师', base(p.agent_path) || '子 agent 开工');
+        } else if (p.kind === 'interrupted') {
+          this._act(p, ts, threadId, live, 'burn', '糊了', '小厨师被叫停，菜撒了一地');
         }
         break;
+      case 'context_compacted':
+        // 上下文压缩：厨师把旧菜谱收进抽屉，腾出案板
+        this._act(p, ts, threadId, live, 'think', '收拾台面', '上下文压缩，旧菜谱收进抽屉');
+        break;
+      case 'thread_goal_updated': {
+        const obj = String(p.goal?.objective || '').split('\n')[0];
+        this._act(p, ts, threadId, live, 'think', '更新订单目标', obj || '更新线程目标');
+        break;
+      }
+      case 'image_generation_end':
+        this._act(p, ts, threadId, live, 'tool', '画招牌', p.revised_prompt || '生成图片');
+        break;
+      case 'thread_rolled_back':
+        this._act(p, ts, threadId, live, 'think', '复盘', '回滚了若干回合，重新来过');
+        break;
       default:
-        break; // token_count 等忽略
+        break; // 忽略：token_count（纯计数噪音）、thread_settings_applied（模型/权限配置快照，无动作语义）
     }
   }
 
@@ -369,7 +406,40 @@ export class KitchenStore {
         case 'send_message':
           this._act(p, ts, threadId, live, 'speak', '给队友传话', args.message || args.text || '');
           break;
+        case 'write_stdin': {
+          // 长命令运行期间的终端交互：chars 为空=查看输出，非空=输入
+          const chars = String(args.chars ?? '');
+          if (chars.trim()) this._act(p, ts, threadId, live, 'exec', '喂柴火', `向终端输入 ${trunc(chars, 24)}`);
+          else this._act(p, ts, threadId, live, 'exec', '盯灶台', '查看终端输出');
+          break;
+        }
+        case 'list_agents':
+          this._act(p, ts, threadId, live, 'think', '点名', '查看队友名单');
+          break;
+        case 'spawn_agent':
+          this._act(p, ts, threadId, live, 'join', '派出小厨师', args.task_name || args.agent_type || '派出子 agent');
+          break;
+        case 'followup_task':
+          this._act(p, ts, threadId, live, 'speak', '给队友派活', base(args.target) || '追加后续任务');
+          break;
+        case 'interrupt_agent':
+          this._act(p, ts, threadId, live, 'speak', '叫停队友', base(args.target) || '打断协作 agent');
+          break;
+        case 'get_goal':
+          this._act(p, ts, threadId, live, 'think', '看订单', '查看当前目标');
+          break;
+        case 'create_goal':
+          this._act(p, ts, threadId, live, 'think', '想菜单', '立下新目标');
+          break;
+        case 'update_goal':
+          this._act(p, ts, threadId, live, 'think', '想菜单', '更新目标');
+          break;
+        case 'imagegen':
+          this._act(p, ts, threadId, live, 'tool', '画招牌', args.prompt || '生成图片');
+          break;
         default:
+          // 兜底：run / js / _get_site / _deploy_* / automation_update 等低频或
+          // 下划线内部工具（本机抽样各 1~2 次），统一按「特殊厨具」展示即可
           this._act(p, ts, threadId, live, 'tool', '特殊厨具', `使用工具 ${p.name}`);
       }
     } else if (p.type === 'custom_tool_call') {
@@ -382,7 +452,10 @@ export class KitchenStore {
       } else {
         this._act(p, ts, threadId, live, 'tool', '特殊厨具', `使用工具 ${p.name || 'custom'}`);
       }
+    } else if (p.type === 'tool_search_call') {
+      this._act(p, ts, threadId, live, 'think', '找厨具', '查找可用工具');
     }
-    // function_call_output / reasoning / message 等忽略（由 event_msg 覆盖）
+    // 忽略：function_call_output / custom_tool_call_output / reasoning / message /
+    // agent_message（response_item 里的 agent_message 与 event_msg 重复）
   }
 }

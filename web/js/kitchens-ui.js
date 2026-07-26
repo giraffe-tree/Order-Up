@@ -88,12 +88,13 @@
     function render() {
       barEl.textContent = '';
       kitchens.forEach(function (k, i) {
-        var card = el('button', 'sw-card' + (k.id === currentId ? ' on' : ''));
+        var card = el('button', 'sw-card' + (k.id === currentId ? ' on' : '') + (k.active ? '' : ' closed'));
         card.type = 'button';
-        card.title = (k.cwd || k.name) + '\n点击切换到这间厨房（数字键 ' + (i + 1) + '）';
+        card.title = (k.cwd || k.name) + (k.active ? '' : '（歇业中）') + '\n点击切换到这间厨房（数字键 ' + (i + 1) + '）';
         card.appendChild(el('span', 'seq', String(i + 1)));
         card.appendChild(el('span', 'lamp' + (k.active ? ' on' : '')));
         card.appendChild(el('span', 'kname', k.name));
+        if (!k.active) card.appendChild(el('span', 'closed-tag', '歇业中'));
         card.appendChild(el('span', 'kmeta',
           '👨‍🍳' + (k.chefs ? k.chefs.length : 0) + ' 🍽' + (k.servedCount || 0)));
         var n = unread[k.id] || 0;

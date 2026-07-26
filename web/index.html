@@ -15,6 +15,8 @@
     <span class="stat">👨‍🍳 厨师 <b id="stat-chefs">0</b></span>
     <span class="stat">🍽 已出餐 <b id="stat-served">0</b></span>
   </div>
+  <button id="btn-sound" class="top-btn" type="button" title="音效开关" hidden>🔊</button>
+  <button id="btn-help" class="top-btn" type="button" title="玩法说明（这是什么？）">?</button>
 </header>
 
 <nav class="switchbar" aria-label="厨房切换条">
@@ -29,7 +31,24 @@
 
 <main class="stage-wrap">
   <section id="stage" class="stage">
-    <div id="stage-empty" class="stage-empty">🍳 暂无厨房开工，等待 codex 会话…</div>
+    <div id="stage-empty" class="stage-empty">
+      <div class="empty-card">
+        <div class="empty-scene" aria-hidden="true">
+          <span class="empty-chef">👨‍🍳</span>
+          <span class="empty-pot">🍳</span>
+          <span class="empty-z">💤</span>
+        </div>
+        <h2>厨房还没开火</h2>
+        <p>在任意项目里启动一个 <b>codex</b> 会话，这里就会亮起一间厨房：</p>
+        <code class="empty-cmd">codex</code>
+        <p class="empty-or">—— 或者先尝尝演示模式 ——</p>
+        <div class="empty-actions">
+          <code class="empty-cmd">node bin/codex-kitchen.js --demo</code>
+          <code class="empty-cmd">http://localhost:4848/?mock=1</code>
+        </div>
+      </div>
+    </div>
+    <div id="conn-banner" class="conn-banner" hidden>📡 连接断开，正在自动重连…</div>
   </section>
   <button id="feed-toggle" class="feed-toggle" type="button">📜 订单流水</button>
   <aside id="feed-panel" class="feed-panel">
@@ -40,14 +59,47 @@
         <button id="ff-all" type="button">全部</button>
       </div>
     </div>
+    <div id="feed-kinds" class="feed-kinds" role="group" aria-label="按事件类型过滤">
+      <button type="button" data-kind="all" class="on">全部</button>
+      <button type="button" data-kind="serve">✅ 出餐</button>
+      <button type="button" data-kind="burn">💥 糊了</button>
+      <button type="button" data-kind="speak">🔔 喊话</button>
+      <button type="button" data-kind="tools">🛠 工具</button>
+    </div>
     <ul id="feed" class="feed"></ul>
   </aside>
 </main>
+
+<div id="guide-overlay" class="guide-overlay" hidden>
+  <div class="guide-card" role="dialog" aria-modal="true" aria-labelledby="guide-title">
+    <h2 id="guide-title">🍳 欢迎来到 Codex Overcooked！</h2>
+    <p class="guide-intro">
+      这是一个把你本机 <b>AI 编程 agent 会话</b>实时演成「胡闹厨房」的本地玩具：<br>
+      每一间厨房 = 一个 agent 会话，每一位 Q 版厨师 = 一个 agent / 子 agent。
+    </p>
+    <h3>厨师们在干嘛？</h3>
+    <ul class="guide-list">
+      <li>📖 看菜谱 = 读文件　🔪 切菜炒菜 = 改代码　🔥 开火上灶 = 跑命令</li>
+      <li>📞 打电话 = 联网搜索　⚡ 高压锅 = MCP 工具　💭 想菜单 = 思考规划</li>
+      <li>🔔 喊话 = 发言 / 点单　✅ 出餐 = 任务完成　💥 糊了 = 出错 / 中断</li>
+      <li>👨‍🍳 新厨师入职 = 子 agent 开工　💤 打瞌睡 = 5 秒没动静</li>
+    </ul>
+    <h3>快捷键</h3>
+    <ul class="guide-keys">
+      <li><kbd>←</kbd> <kbd>→</kbd> 前后切换厨房</li>
+      <li><kbd>1</kbd> – <kbd>9</kbd> 直达第 N 间厨房</li>
+      <li>🖱 舞台上拖拽环绕视角，滚轮缩放</li>
+      <li><kbd>Esc</kbd> 关闭本说明</li>
+    </ul>
+    <button id="guide-start" class="guide-start" type="button">开始围观 🍽</button>
+  </div>
+</div>
 
 <script src="js/store.js"></script>
 <script src="js/mock.js"></script>
 <script src="js/net.js"></script>
 <script src="js/kitchens-ui.js"></script>
+<script src="js3d/audio.js"></script>
 <script type="module" src="js/main.js"></script>
 </body>
 </html>

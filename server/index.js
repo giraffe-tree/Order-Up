@@ -61,10 +61,27 @@ export function startServer({ port, demo = false, sessionsDir } = {}) {
     }
 
     const server = http.createServer(async (req, res) => {
-      const u = new URL(req.url, 'http://localhost');
+      try {
+        await handleRequest(req, res);
+      } catch (e) {
+        // 任何未预料的单请求错误都不应拖垮整个服务
+        try { send(res, 500, 'Internal Server Error'); } catch { /* 连接可能已断 */ }
+      }
+    });
+    // 畸形 HTTP 请求（坏头等）直接回 400，不抛未捕获异常
+    server.on('clientError', (err, socket) => {
+      try { socket.end('HTTP/1.1 400 Bad Request\r\n\r\n'); } catch { /* 忽略 */ }
+    });
+
+    async function handleRequest(req, res) {
+      let u;
+      try { u = new URL(req.url, 'http://localhost'); } catch { send(res, 400, 'Bad Request'); return; }
 
       if (u.pathname === '/api/snapshot') {
-        send(res, 200, JSON.stringify(store.snapshot()), 'application/json; charset=utf-8');
+        let body;
+        try { body = JSON.stringify(store.snapshot()); }
+        catch { send(res, 500, 'snapshot unavailable'); return; }
+        send(res, 200, body, 'application/json; charset=utf-8');
         return;
       }
 
@@ -79,6 +96,7 @@ export function startServer({ port, demo = false, sessionsDir } = {}) {
         clients.add(res);
         const hb = setInterval(() => { try { res.write(': ping\n\n'); } catch { /* 忽略 */ } }, 15000);
         req.on('close', () => { clearInterval(hb); clients.delete(res); });
+        res.on('error', () => { clearInterval(hb); clients.delete(res); });
         return;
       }
 
@@ -87,7 +105,8 @@ export function startServer({ port, demo = false, sessionsDir } = {}) {
       try { pathname = decodeURIComponent(u.pathname); } catch { send(res, 400, 'Bad Request'); return; }
       if (pathname === '/') pathname = '/index.html';
       const filePath = path.normalize(path.join(WEB_ROOT, pathname));
-      if (!filePath.startsWith(WEB_ROOT)) { send(res, 403, 'Forbidden'); return; }
+      // 防目录穿越：必须严格位于 WEB_ROOT 之内（边界用分隔符，避免 /web-evil 误判）
+      if (filePath !== WEB_ROOT && !filePath.startsWith(WEB_ROOT + path.sep)) { send(res, 403, 'Forbidden'); return; }
       try {
         const data = await fsp.readFile(filePath);
         send(res, 200, data, MIME[path.extname(filePath).toLowerCase()] || 'application/octet-stream');
@@ -95,7 +114,7 @@ export function startServer({ port, demo = false, sessionsDir } = {}) {
         if (pathname === '/index.html') send(res, 200, PLACEHOLDER, 'text/html; charset=utf-8');
         else send(res, 404, 'Not Found');
       }
-    });
+    }
 
     server.on('error', reject);
     server.listen(port, () => {

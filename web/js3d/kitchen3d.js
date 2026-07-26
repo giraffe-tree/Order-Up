@@ -7,6 +7,7 @@ import { PAL, CHEF_COLORS } from './palette.js';
 import { FX } from './fx.js';
 import { ChefActor } from './chef.js';
 import { plankTexture } from './textures.js';
+import { buildDecor } from './decor.js';
 import {
   buildKitchen, disposeKitchen, findPath, nearestCell, cellToWorld,
   DOOR_CELLS, SPAWN, REST_CELLS, GW, GH,
@@ -35,6 +36,8 @@ export class KitchenRenderer {
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping; // 暖光更柔、不过曝
+    this.renderer.toneMappingExposure = 1.12;
     this.renderer.setClearColor(PAL.groundOut);
     const el = this.renderer.domElement;
     el.style.display = 'block';
@@ -46,10 +49,10 @@ export class KitchenRenderer {
     this.scene = new THREE.Scene();
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 120);
 
-    // --- 灯光：暖色半球光 + 方向光（开阴影） ---
-    this.hemi = new THREE.HemisphereLight(PAL.warmLight, 0x8A6F52, 1.55);
+    // --- 灯光：暖色半球光 + 方向光（开阴影）；吊灯/火把点光由 decor 提供并闪烁 ---
+    this.hemi = new THREE.HemisphereLight(PAL.warmLight, 0x8A6F52, 1.3);
     this.scene.add(this.hemi);
-    this.dir = new THREE.DirectionalLight(0xFFF1D6, 2.1);
+    this.dir = new THREE.DirectionalLight(0xFFF1D6, 1.85);
     this.dir.position.set(6, 11, 5);
     this.dir.castShadow = true;
     this.dir.shadow.mapSize.set(2048, 2048);
@@ -92,11 +95,14 @@ export class KitchenRenderer {
     for (const [, c] of this.chefs) if (c.actor) c.actor.dispose(this.scene);
     this.chefs.clear();
     this.restAssign.clear();
+    if (this.decor) { this.decor.dispose(); this.decor = null; }
     if (this.built) { disposeKitchen(this.scene, this.built); this.built = null; }
     this.stoveEmitters.clear();
+    this.fx.emitters.length = 0; // 发射器随厨房重建，避免跨厨房累积
 
     this.kitchenData = kitchen || { id: 'k', name: '厨房', active: true };
     this.built = buildKitchen(this.scene);
+    this.decor = buildDecor(this.scene, { wallN: -(GH - 1) / 2 - 0.66 });
     this._indexStations();
     this._buildSigns();
     this._registerStationFX();
@@ -177,6 +183,7 @@ export class KitchenRenderer {
     for (const [, c] of this.chefs) if (c.actor) c.actor.dispose(this.scene);
     this.chefs.clear();
     ChefActor.disposeShared();
+    if (this.decor) { this.decor.dispose(); this.decor = null; }
     if (this.built) { disposeKitchen(this.scene, this.built); this.built = null; }
     this.fx.dispose();
     if (this._signs) for (const s of this._signs) {
@@ -210,14 +217,18 @@ export class KitchenRenderer {
   }
 
   _registerStationFX() {
-    // 灶台火焰发射器（有厨师 exec 时开启）
+    // 灶台火焰发射器（有厨师 exec 时开启）+ 锅盖口沿常驻微蒸汽（氛围）
     for (const s of this.built.spots) {
       if (s.kind === 'stove') {
         const e = this.fx.addEmitter({ x: s.x, y: s.topY + 0.05, z: s.z, kind: 'flame', rate: 10, jitter: 0.3, vy: 1.2, on: false });
         this.stoveEmitters.set(s, { emitter: e, users: 0, spot: s });
+        // 锅烧开后口沿缓缓冒汽
+        this.fx.addEmitter({ x: s.x + 0.1, y: s.topY + 0.42, z: s.z, kind: 'steam', rate: 1.1, jitter: 0.14, vy: 0.55, scale: 0.7, on: true });
       } else if (s.kind === 'pressure') {
         const e = this.fx.addEmitter({ x: s.x, y: s.topY + 0.45, z: s.z, kind: 'steam', rate: 5, jitter: 0.12, vy: 1.0, on: false });
         this.stoveEmitters.set(s, { emitter: e, users: 0, spot: s });
+        // 泄压阀常驻细汽
+        this.fx.addEmitter({ x: s.x, y: s.topY + 0.46, z: s.z, kind: 'steam', rate: 0.7, jitter: 0.05, vy: 0.7, scale: 0.5, on: true });
       }
     }
   }
@@ -245,9 +256,9 @@ export class KitchenRenderer {
       return mesh;
     };
     const S = (GH - 1) / 2 + 0.66;
-    // 厨房名牌（北墙上方，避开出餐窗口）
+    // 厨房名牌（挂在加高后的北墙砖面上，避开出餐窗口）
     this.nameSign = mkSign(`🍳 ${this.kitchenData.name || '厨房'}`, 3.2, 0.7,
-      new THREE.Vector3(0, 2.78, -(GH - 1) / 2 - 0.5), 0, { fontSize: 40, bg: '#3A2E40' });
+      new THREE.Vector3(0, 2.82, -(GH - 1) / 2 - 0.32), 0, { fontSize: 40, bg: '#3A2E40' });
     // 歇业中（挂在门楣外立面，默认隐藏）
     this.closedSign = mkSign('歇业中', 1.7, 0.55, new THREE.Vector3(0, 1.72, S + 0.2), 0, { fontSize: 48 });
     this.closedSign.visible = false;
@@ -265,8 +276,8 @@ export class KitchenRenderer {
 
   _applyActive(active) {
     if (active) {
-      this.hemi.intensity = 1.55;
-      this.dir.intensity = 2.1;
+      this.hemi.intensity = 1.3;
+      this.dir.intensity = 1.85;
       this.renderer.setClearColor(PAL.groundOut);
     } else {
       // 歇业：整体压暗
@@ -274,6 +285,7 @@ export class KitchenRenderer {
       this.dir.intensity = 0.45;
       this.renderer.setClearColor(0x1E1510);
     }
+    if (this.decor) this.decor.setDim(active ? 1 : 0.12); // 吊灯/火把同步压暗
     if (this.closedSign) this.closedSign.visible = !active;
   }
 
@@ -409,9 +421,9 @@ export class KitchenRenderer {
   // ============ 内部：摄像机 ============
 
   _fitCamera() {
-    // 把 12×9 厨房（含墙）装进视口：取宽高两个约束的较大距离
+    // 把 12×9 厨房（含 3.2 高北墙与挂饰）装进视口：取宽高两个约束的较大距离
     const halfW = (GW + 2.2) / 2;
-    const halfH = ((GH + 2.4) / 2) * Math.sin(this.view.pitch) + 1.2;
+    const halfH = ((GH + 2.4) / 2) * Math.sin(this.view.pitch) + 2.1;
     const vFov = this.camera.fov * DEG;
     const dV = halfH / Math.tan(vFov / 2);
     const dH = halfW / (Math.tan(vFov / 2) * this.camera.aspect);
@@ -508,6 +520,7 @@ export class KitchenRenderer {
       if (c.actor && c.visible && c.spawnDelay == null) c.actor.update(dt);
     }
     this.fx.update(dt);
+    if (this.decor) this.decor.update(t); // 吊灯/火把光晕闪烁
     this._updateCamera(t);
   }
 }
