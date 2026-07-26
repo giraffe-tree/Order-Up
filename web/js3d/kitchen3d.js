@@ -124,14 +124,14 @@ export class KitchenRenderer {
     const kind = action.kind;
     const leaveStation = () => { if (actor.station) this._stationFX(actor.station, false); };
 
-    if (kind === 'think') { leaveStation(); actor.think(action.label); return; }
-    if (kind === 'burn') { leaveStation(); actor.burn(action.label); return; }
-    if (kind === 'join') { leaveStation(); this._runIn(actor, action.label); return; }
+    if (kind === 'think') { leaveStation(); actor._pendingSpot = null; actor.think(action.label); return; }
+    if (kind === 'burn') { leaveStation(); actor._pendingSpot = null; actor.burn(action.label); return; }
+    if (kind === 'join') { leaveStation(); actor._pendingSpot = null; this._runIn(actor, action.label); return; }
     if (kind === 'idle') { this._sendToRest(actor, true); return; }
 
     const stationKind = KIND_TO_STATION[kind];
     const spot = stationKind ? this._pickSpot(stationKind) : null;
-    if (!spot) { actor.think(action.label); return; } // 未知动作：原地思考兜底
+    if (!spot) { actor._pendingSpot = null; actor.think(action.label); return; } // 未知动作：原地思考兜底
     this._sendToStation(actor, spot, kind, action);
   }
 
@@ -146,9 +146,9 @@ export class KitchenRenderer {
     else if (status === 'done') {
       actor.cancelWork();
       actor.setBubble(null);
+      actor._pendingSpot = null;
       // 回休息区坐下摘帽
-      const cell = this._restCellFor(chefId);
-      const w = cellToWorld(cell.ix, cell.iz);
+      const w = this._restSpotFor(chefId);
       const path = this._pathFrom(actor, w);
       actor.goTo(path, { speed: 3.0, onArrive: () => actor.sitDone() });
     } else if (status === 'cooking') actor.wake();
@@ -289,17 +289,38 @@ export class KitchenRenderer {
   }
 
   _runIn(actor, label) {
-    const cell = this._restCellFor(actor.id);
-    const w = cellToWorld(cell.ix, cell.iz);
+    const w = this._restSpotFor(actor.id);
     const path = this._pathFrom(actor, w);
     actor.goTo(path, { speed: 4.6, onArrive: () => actor.sleep() }); // 小跑入场
   }
 
-  _restCellFor(chefId) {
+  // 休息位分配：优先占空格；格子占满后同格厨师按黄金角环状错开，永不完全重叠
+  _restSpotFor(chefId) {
     if (!this.restAssign.has(chefId)) {
-      this.restAssign.set(chefId, this.restAssign.size % REST_CELLS.length);
+      const used = new Set(this.restAssign.values());
+      let idx = -1;
+      for (let i = 0; i < REST_CELLS.length; i++) {
+        if (!used.has(i)) { idx = i; break; }
+      }
+      if (idx === -1) idx = this.restAssign.size % REST_CELLS.length; // 全部占满：复用格子
+      this.restAssign.set(chefId, idx);
     }
-    return REST_CELLS[this.restAssign.get(chefId)];
+    const idx = this.restAssign.get(chefId);
+    const cell = REST_CELLS[idx];
+    const w = cellToWorld(cell.ix, cell.iz);
+    // 同格第 k 个厨师（k≥1）：确定性环状偏移
+    let k = 0;
+    for (const [id, i] of this.restAssign) {
+      if (id === chefId) break;
+      if (i === idx) k++;
+    }
+    if (k > 0) {
+      const ang = (k - 1) * 2.4 + 0.6; // 黄金角散布
+      const r = 0.34 + 0.06 * Math.min(k, 3);
+      w.x += Math.cos(ang) * r;
+      w.z += Math.sin(ang) * r;
+    }
+    return w;
   }
 
   _pathFrom(actor, worldTo) {
@@ -322,9 +343,12 @@ export class KitchenRenderer {
     if (actor.station && actor.station !== spot) this._stationFX(actor.station, false);
     const cell = this._approachCell(spot);
     const w = cellToWorld(cell.ix, cell.iz);
-    // 同工位多人微微错开
+    // 同工位多人微微错开（已就位 + 正在赶路的都要计数，且排除自己）
     let n = 0;
-    for (const [, c] of this.chefs) if (c.actor && c.actor.station === spot) n++;
+    for (const [id, c] of this.chefs) {
+      if (id === actor.id || !c.actor) continue;
+      if (c.actor.station === spot || c.actor._pendingSpot === spot) n++;
+    }
     w.x += ((n % 3) - 1) * 0.22;
     w.z += (Math.floor(n / 3) % 2) * 0.22 - 0.11;
     const path = this._pathFrom(actor, w);
@@ -332,6 +356,7 @@ export class KitchenRenderer {
     actor.goTo(path, {
       speed: 3.4,
       onArrive: () => {
+        actor._pendingSpot = null;
         actor.startWork(kind, spot, action.label);
         this._stationFX(spot, true);
       },
@@ -343,8 +368,8 @@ export class KitchenRenderer {
 
   _sendToRest(actor, sleep) {
     if (actor.station) { this._stationFX(actor.station, false); }
-    const cell = this._restCellFor(actor.id);
-    const w = cellToWorld(cell.ix, cell.iz);
+    actor._pendingSpot = null;
+    const w = this._restSpotFor(actor.id);
     const path = this._pathFrom(actor, w);
     actor.goTo(path, { speed: 3.0, onArrive: () => { if (sleep) actor.sleep(); } });
   }
@@ -361,9 +386,16 @@ export class KitchenRenderer {
     let hidden = 0;
     all.forEach((c, i) => {
       const vis = i < MAX_VISIBLE;
+      const was = c.visible;
       c.visible = vis;
       if (c.actor) c.actor.group.visible = vis && c.spawnDelay == null;
-      if (!vis) hidden++;
+      if (!vis) {
+        hidden++;
+        this.restAssign.delete(c.data.id); // 藏进后厨：让出休息位，避免前厅休息区格子被占满
+      } else if (!was && c.actor && c.spawnDelay == null) {
+        // 从后厨回到前厅：重新分配休息位并走过去
+        this._sendToRest(c.actor, c.data.status !== 'cooking');
+      }
     });
     if (this.backSign) {
       this.backSign.visible = hidden > 0;
