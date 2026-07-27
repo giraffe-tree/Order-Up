@@ -41,9 +41,9 @@ export const LAYOUT = [
   { ix: 0, iz: 3, kind: 'counter' }, { ix: 0, iz: 4, kind: 'counter' },
   { ix: 0, iz: 5, kind: 'counter' }, { ix: 0, iz: 6, kind: 'counter' },
   { ix: 0, iz: 7, kind: 'counter' },
-  // 东墙一列 (x=11)
+  // 东墙一列 (x=11)；iz=4 为增设的炒锅（炒菜区外摆，站位 x=10 东走道，不挡门/出餐口）
   { ix: 11, iz: 1, kind: 'counter' }, { ix: 11, iz: 2, kind: 'counter' },
-  { ix: 11, iz: 3, kind: 'counter' }, { ix: 11, iz: 4, kind: 'counter' },
+  { ix: 11, iz: 3, kind: 'counter' }, { ix: 11, iz: 4, kind: 'wok', icon: '🔪', face: 'e' },
   { ix: 11, iz: 5, kind: 'counter' }, { ix: 11, iz: 6, kind: 'counter' },
   { ix: 11, iz: 7, kind: 'counter' },
   // 南墙一排 (z=8)，x=5,6 为门口
@@ -59,7 +59,8 @@ export const LAYOUT = [
   { ix: 4, iz: 4, kind: 'pressure', icon: '⚡', face: 'n' },
   { ix: 5, iz: 4, kind: 'plates' },
   { ix: 6, iz: 4, kind: 'crate', icon: '🍚', face: 'n' },
-  { ix: 7, iz: 4, kind: 'counter' },
+  // 岛台东南角增设第二炒锅（与 iz=3 的老炒锅组成炒菜区）：face 'n' → 厨师站 z=5 南走道
+  { ix: 7, iz: 4, kind: 'wok', icon: '🔪', face: 'n' },
 ];
 
 export const DOOR_CELLS = [{ ix: 5, iz: 8 }, { ix: 6, iz: 8 }];
@@ -440,9 +441,9 @@ export function buildKitchen(scene) {
   floor.position.set(0, -0.05, 0);
   floor.receiveShadow = true;
   group.add(floor);
-  // 厨房外大地面（径向压暗，避免发灰发平）
+  // 厨房外大地面（中心被灯光烘暖 → 边缘没入夜色，带石板/沙砾/草叶碎点）
   const outer = new THREE.Mesh(new THREE.PlaneGeometry(60, 60),
-    new THREE.MeshStandardMaterial({ map: outerGroundTexture({ inner: PAL.groundOut, outer: 0x2E1F13 }), roughness: 1 }));
+    new THREE.MeshStandardMaterial({ map: outerGroundTexture(), roughness: 1 }));
   outer.rotation.x = -Math.PI / 2;
   outer.position.y = -0.12;
   outer.receiveShadow = true;
@@ -467,14 +468,14 @@ export function buildKitchen(scene) {
   mkWall(E, 0, 0.3, GH + 1.3, 1.7);           // 东墙
   mkWall(-3.75, S, 5.5, 0.3, 1.5);            // 南墙左段（门洞 x∈[-1,1]）
   mkWall(3.75, S, 5.5, 0.3, 1.5);             // 南墙右段
-  // 门框 + 门垫
+  // 门框 + 门垫（门垫底面抬高 0.01，不与地板顶面共面，避免门口地面 z-fighting）
   const post1 = box(0.24, 2.0, 0.34, mat('frameWood', PAL.frameWood));
   post1.position.set(-1.12, 1.0, S);
   const post2 = post1.clone(); post2.position.x = 1.12;
   const lintel = box(2.5, 0.24, 0.34, mat('frameWood', PAL.frameWood));
   lintel.position.set(0, 2.0, S);
   const matDoor = box(2.0, 0.03, 1.0, mat('wallCap', PAL.wallCap));
-  matDoor.position.set(0, 0.015, S - 0.7);
+  matDoor.position.set(0, 0.025, S - 0.7);
   group.add(post1, post2, lintel, matDoor);
   // 门口 🚪 图标
   const doorIcon = new THREE.Mesh(new THREE.PlaneGeometry(0.6, 0.6),

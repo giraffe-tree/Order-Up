@@ -156,6 +156,7 @@ if (SHOT) setTimeout(() => {
     dir: r.dir.intensity,
     visibleChefs: [...r.chefs.values()].filter((c) => c.visible).length,
     signPos: r.backSign ? r.backSign.position.toArray().map((v) => +v.toFixed(2)) : null,
+    dining: r.dining ? r.dining.stats() : null,
   });
 }, 8700);
 
