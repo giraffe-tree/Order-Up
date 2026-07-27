@@ -1,12 +1,26 @@
 # 依赖
 node_modules/
 
+# IDE / 编辑器
+.idea/
+.vscode/
+*.swp
+
 # 系统文件
 .DS_Store
+Thumbs.db
+
+# 环境变量与本地密钥（保险起见，仓库本不该有）
+.env
+.env.local
 
 # 自测截图产物（可用 web/js3d/test.html 重新生成）
 web/js/shell-selftest.png
 web/js3d/selftest*.png
 
+# devtool-server 性能上报临时文件
+scripts/.perf-result.txt
+
 # 日志
 *.log
+npm-debug.log*
