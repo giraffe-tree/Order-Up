@@ -52,6 +52,8 @@ codex-overcooked-by-kimi/
 
 ## SSE / API 契约（前后端唯一接口，双方严格遵守）
 `GET /api/snapshot` → `{ "kitchens": Kitchen[] }`
+`GET /api/kitchen/<id>/history` → `{ "kitchen": Kitchen }`（按需加载：占位厨房点击后完整回放其会话文件；
+幂等——已加载直接返回现状，不重复解析；结果同时通过 SSE 广播 `kitchen_updated` 同步其他客户端；未知 id 返回 404）
 `GET /api/events` (SSE) → 每条消息 `data: <json>\n\n`，json 形如：
 ```json
 { "type": "snapshot",      "kitchens": [Kitchen] }
@@ -66,15 +68,20 @@ codex-overcooked-by-kimi/
 ```ts
 Kitchen = { id: string, name: string /* cwd basename */, cwd: string,
             project: string /* cwd 目录名（项目名），前端「项目 → 会话」分组用 */, chefs: Chef[],
-            servedCount: number, active: boolean, lastTs: number }
+            servedCount: number, active: boolean, lastTs: number,
+            lazy: boolean /* true=占位厨房：还有会话文件未完整回放，前端点击后走 /history 按需加载 */ }
 Chef    = { id: string, name: string /* 128 人厨师池，hash(threadId) 稳定分配、厨房内撞名顺延 */, role: string|null,
             depth: number, status: "cooking"|"idle"|"done", color: string /* hex，后端分配 */,
             lastAction: Action|null }
 ```
 - 厨房归并规则：按「根线程 id」归并；无父子信息时按 `cwd` 归并。厨房 id 稳定。
-- 启动时解析最近 48h 内（或最近 30 个）会话文件重建快照；活跃文件实时 tail。
+- 启动懒加载：默认只回放最近 `--replay-sessions`（默认 5）个会话文件，且每个文件只回放
+  「首行 session_meta + 尾部 `--replay-lines`（默认 100）行」（尾部偏移从后往前读块定位，不整文件读入）；
+  其余旧会话只读首行建 `lazy:true` 的占位厨房（无厨师），前端点击后按需完整加载；
+  占位文件之后有新写入会自动触发完整加载（活跃会话不掉线），新出现的会话文件仍从头实时 tail。
 - 5 秒无新事件的厨师置 `idle`（发 `chef_status`）；文件 10 分钟无写入置厨房 `active:false`。
-- CLI：`--port <n>`（默认 4848，占用则自增）、`--demo`、`--no-open`、`--sessions-dir <path>`。
+- CLI：`--port <n>`（默认 4848，占用则自增）、`--demo`、`--no-open`、`--sessions-dir <path>`、
+  `--replay-sessions <n>`（默认 5）、`--replay-lines <n>`（默认 100）。
 
 ## 阶段
 - Stage 1（并行）：

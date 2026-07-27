@@ -38,7 +38,7 @@ function send(res, code, body, type = 'text/plain; charset=utf-8') {
   res.end(body);
 }
 
-export function startServer({ port, demo = false, sessionsDir } = {}) {
+export function startServer({ port, demo = false, sessionsDir, replaySessions, replayLines } = {}) {
   return new Promise((resolve, reject) => {
     const clients = new Set();
     const store = new KitchenStore({
@@ -56,7 +56,7 @@ export function startServer({ port, demo = false, sessionsDir } = {}) {
     if (demo) {
       stopDemo = startDemo(store);
     } else {
-      watcher = new SessionWatcher({ dir: sessionsDir, store });
+      watcher = new SessionWatcher({ dir: sessionsDir, store, replaySessions, replayLines });
       watcher.start().catch((e) => console.error(`扫描会话目录失败：${e.message}`));
     }
 
@@ -85,8 +85,30 @@ export function startServer({ port, demo = false, sessionsDir } = {}) {
         return;
       }
 
-      if (u.pathname === '/api/events') {
-        res.writeHead(200, {
+      // 按需加载：GET /api/kitchen/<id>/history —— 占位厨房点击后完整回放其会话文件。
+      // 幂等：已加载的厨房直接返回现状；结果同时通过 SSE 广播 kitchen_updated。
+      const histMatch = /^\/api\/kitchen\/([^/]+)\/history$/.exec(u.pathname);
+      if (histMatch) {
+        let id;
+        try { id = decodeURIComponent(histMatch[1]); } catch { send(res, 400, 'Bad Request'); return; }
+        if (!watcher) {
+          send(res, 404, JSON.stringify({ error: 'demo 模式无历史可加载' }), 'application/json; charset=utf-8');
+          return;
+        }
+        try {
+          const kitchen = await watcher.loadKitchen(id);
+          if (!kitchen) {
+            send(res, 404, JSON.stringify({ error: 'unknown kitchen' }), 'application/json; charset=utf-8');
+            return;
+          }
+          send(res, 200, JSON.stringify({ kitchen }), 'application/json; charset=utf-8');
+        } catch (e) {
+          send(res, 500, JSON.stringify({ error: String((e && e.message) || e) }), 'application/json; charset=utf-8');
+        }
+        return;
+      }
+
+      if (u.pathname === '/api/events') {        res.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',

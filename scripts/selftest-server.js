@@ -258,6 +258,83 @@ async function main() {
     ok(dish3 && dish3.dish.name === '快照接口开发', `空消息时菜名兜底为线程标题（实际 ${dish3?.dish.name}）`);
     sse.close();
 
+    console.log('▶ 用例 2d：懒加载（启动只回放最近 2 会话 × 尾部 3 行；占位厨房按需加载）');
+    const lazyDir = path.join(root, 'lazy-sessions', '2026', '07', '25');
+    await fsp.mkdir(lazyDir, { recursive: true });
+    const writeSess = async (name, id, cwd, serves, mtime) => {
+      const lines = [JSON.stringify({
+        timestamp: '2026-07-25T10:00:00.000Z', type: 'session_meta',
+        payload: { id, cwd, originator: 'cli' },
+      })];
+      for (let i = 1; i <= serves; i++) {
+        lines.push(JSON.stringify({
+          timestamp: `2026-07-25T10:00:${String(i).padStart(2, '0')}.000Z`, type: 'event_msg',
+          payload: { type: 'task_complete', last_agent_message: `第${i}道菜` },
+        }));
+      }
+      const p = path.join(lazyDir, `rollout-2026-07-25T10-00-00-${name}.jsonl`);
+      await fsp.writeFile(p, lines.join('\n') + '\n');
+      const t = new Date(mtime);
+      await fsp.utimes(p, t, t); // 显式控制 mtime，保证回放选择顺序
+    };
+    await writeSess('old3', 'lazy-old3', '/tmp/lazy/old-three', 1, '2026-07-25T10:00:00Z');
+    await writeSess('old2', 'lazy-old2', '/tmp/lazy/old-two', 3, '2026-07-25T10:05:00Z');
+    await writeSess('old1', 'lazy-old1', '/tmp/lazy/old-one', 5, '2026-07-25T10:10:00Z');
+    await writeSess('recent2', 'lazy-r2', '/tmp/lazy/recent-two', 2, '2026-07-25T10:20:00Z');
+    await writeSess('recent1', 'lazy-r1', '/tmp/lazy/recent-one', 10, '2026-07-25T10:30:00Z');
+
+    const h4 = await startServer({
+      port: 0, demo: false, sessionsDir: path.join(root, 'lazy-sessions'),
+      replaySessions: 2, replayLines: 3,
+    });
+    handles.push(h4);
+    const port4 = h4.server.address().port;
+
+    let lsnap = null;
+    for (let i = 0; i < 40; i++) {
+      const body = JSON.parse((await get(port4, '/api/snapshot')).body);
+      const r1 = body.kitchens?.find((x) => x.id === 't:lazy-r1');
+      if (body.kitchens?.length === 5 && r1?.chefs.length >= 1) { lsnap = body; break; }
+      await sleep(250);
+    }
+    ok(lsnap !== null, '懒加载快照含全部 5 间厨房（2 间已加载 + 3 间占位）');
+    if (lsnap) {
+      const loaded = lsnap.kitchens.filter((x) => !x.lazy);
+      const lazyOnes = lsnap.kitchens.filter((x) => x.lazy);
+      ok(loaded.length === 2 && loaded.every((x) => x.id === 't:lazy-r1' || x.id === 't:lazy-r2'),
+        `回放数量上限：仅最近 2 个会话完整回放（实际 ${loaded.map((x) => x.id).join(',')}）`);
+      ok(lazyOnes.length === 3 && lazyOnes.every((x) => x.chefs.length === 0 && !!x.name && !!x.project && x.active === false),
+        '占位厨房只带名字/cwd/项目信息（无厨师、歇业、lazy=true）');
+      const r1k = lsnap.kitchens.find((x) => x.id === 't:lazy-r1');
+      ok(r1k.servedCount === 3,
+        `每会话只回放尾部 3 行：10 次出餐的会话 servedCount=3（实际 ${r1k.servedCount}）`);
+      const r2k = lsnap.kitchens.find((x) => x.id === 't:lazy-r2');
+      ok(r2k.servedCount === 2 && r2k.chefs.length === 1, '行数少于上限的会话完整回放');
+    }
+
+    const sseL = connectSSE(port4);
+    await sseL.waitFor((e) => e.type === 'snapshot', 5000, 'SSE 首帧').catch(() => null);
+    const h1r = await get(port4, '/api/kitchen/t:lazy-old1/history');
+    ok(h1r.status === 200, 'GET /api/kitchen/<id>/history 按需加载接口返回 200');
+    const h1k = h1r.status === 200 ? JSON.parse(h1r.body).kitchen : null;
+    ok(h1k && h1k.lazy === false && h1k.chefs.length === 1 && h1k.servedCount === 5,
+      `按需加载后完整历史到位（chefs=1、servedCount=5、lazy=false；实际 ${h1k && h1k.servedCount}）`);
+    const bEv = await sseL.waitFor(
+      (e) => e.type === 'kitchen_updated' && e.kitchen?.id === 't:lazy-old1' && e.kitchen?.lazy === false,
+      5000, 'kitchen_updated 广播').catch(() => null);
+    ok(bEv !== null, '按需加载结果通过 SSE 广播 kitchen_updated 同步其他客户端');
+    const h2r = await get(port4, '/api/kitchen/t:lazy-old1/history');
+    const h2k = h2r.status === 200 ? JSON.parse(h2r.body).kitchen : null;
+    ok(h2k && h2k.servedCount === 5 && h2k.chefs.length === 1,
+      `重复加载幂等：servedCount 仍为 5（实际 ${h2k && h2k.servedCount}）`);
+    const h3r = await get(port4, '/api/kitchen/t:no-such/history');
+    ok(h3r.status === 404, '未知厨房按需加载返回 404');
+    const snapL2 = JSON.parse((await get(port4, '/api/snapshot')).body);
+    const old1Now = snapL2.kitchens.find((x) => x.id === 't:lazy-old1');
+    ok(old1Now && old1Now.lazy === false && old1Now.servedCount === 5,
+      '加载后快照同步（占位厨房转为已加载）');
+    sseL.close();
+
     console.log('▶ 用例 3：demo 模式');
     const h2 = await startServer({ port: 0, demo: true });
     handles.push(h2);

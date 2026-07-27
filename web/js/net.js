@@ -57,5 +57,15 @@
     };
   }
 
-  global.CONet = { connect: connect };
+  // 按需加载占位厨房：GET /api/kitchen/<id>/history → Kitchen（已加载的服务端幂等返回现状）
+  function loadKitchen(id) {
+    return fetch('/api/kitchen/' + encodeURIComponent(id) + '/history')
+      .then(function (r) {
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        return r.json();
+      })
+      .then(function (d) { return d.kitchen || null; });
+  }
+
+  global.CONet = { connect: connect, loadKitchen: loadKitchen };
 })(typeof window !== 'undefined' ? window : globalThis);

@@ -75,7 +75,7 @@ const SOUND_KIND = { serve: 'serve', burn: 'burn', join: 'join', edit: 'chop', e
 
 /* ---- 渲染器：优先 3D（web/js3d/kitchen3d.js），加载失败回退到占位 stub ----
    契约方法：setKitchen(kitchen, chefs) / addChef(chef) / chefAction(chefId, action)
-             / chefStatus(chefId, status) / dishServed(dish) / resize() / dispose() */
+             / chefStatus(chefId, status) / dishServed(dish) / setActive(active) / resize() / dispose() */
 const mod = await import('../js3d/kitchen3d.js').catch(() => import('./renderer-stub.js'));
 let renderer = null;
 let usingStub = !!mod.KitchenRenderer.isStub;
@@ -99,16 +99,37 @@ if (usingStub) {
 window.addEventListener('resize', () => renderer.resize());
 
 /* ---- 厨房切换系统 ---- */
+const dataSource = useMock ? COMock : CONet;
+const loadingKitchens = new Set(); // 正在按需加载的厨房 id（防重复拉取）
+
+/* 占位厨房按需加载：拉完整历史 → 合并进 store → 若仍是当前厨房则重建渲染器。
+   已加载的厨房 lazy=false 不会触发；同一厨房并发点击只拉一次（服务端同样幂等）。 */
+function loadKitchenHistory(id) {
+  if (loadingKitchens.has(id)) return;
+  if (!dataSource || typeof dataSource.loadKitchen !== 'function') return;
+  loadingKitchens.add(id);
+  dataSource.loadKitchen(id).then((kitchen) => {
+    if (!kitchen) return;
+    COStore.applyEvent(state, { type: 'kitchen_updated', kitchen: kitchen });
+    ui.sync(state.kitchens);
+    const cur = ui.currentKitchen();
+    if (cur && cur.id === id) renderer.setKitchen(cur, cur.chefs || []);
+    stageEmptyEl.style.display = cur ? 'none' : '';
+    renderStats();
+    renderFeed();
+  }).catch(() => {}).finally(() => loadingKitchens.delete(id));
+}
+
 const ui = COKitchensUI.create({
   barEl: document.getElementById('sw-cards'),
+  tabsEl: document.getElementById('sw-tabs'),
   prevEl: document.getElementById('sw-prev'),
   nextEl: document.getElementById('sw-next'),
-  followEl: document.getElementById('follow'),
-  followTextEl: document.getElementById('follow-text'),
   onSwitch(kitchen) {
-    // 切换厨房：渲染器清场重建，厨师从门口入场
+    // 切换厨房：渲染器清场重建，厨师从门口入场（占位厨房无厨师也能渲染空厨房）
     renderer.setKitchen(kitchen, kitchen.chefs || []);
     renderFeed(); // 「当前厨房」过滤跟随切换
+    if (kitchen.lazy) loadKitchenHistory(kitchen.id); // 占位厨房：点击后按需拉取完整历史
   }
 });
 
@@ -296,7 +317,7 @@ const handlers = {
   onEvent(ev) {
     const effects = COStore.applyEvent(state, ev);
 
-    // 非当前厨房的事件：只累计切换条红点（跟随开启时可能自动跳过去）
+    // 非当前厨房的事件：只累计切换条红点（卡片级 + 项目标签级聚合），不自动跳转
     const kid = ev.kitchenId || (ev.kitchen && ev.kitchen.id);
     if (kid && kid !== ui.currentId()) ui.noteEvent(kid);
 
@@ -318,9 +339,12 @@ const handlers = {
           renderer.chefStatus(ef.chefId, ef.status);
           break;
         case 'kitchen_updated': {
-          // 厨房改名/状态更新：重绘墙上名牌（不重建场景）
+          // 厨房改名/状态更新：重绘墙上名牌（不重建场景）；歇业状态实时同步（幂等）。
+          // 厨师阵容变化（占位厨房按需加载完成、SSE 广播补历史）则重建场景。
           const cur = ui.currentKitchen();
-          if (cur && renderer.setKitchenName) renderer.setKitchenName(cur.name);
+          if (cur && ef.chefsChanged) renderer.setKitchen(cur, cur.chefs || []);
+          else if (cur && renderer.setKitchenName) renderer.setKitchenName(cur.name);
+          if (cur && renderer.setActive) renderer.setActive(cur.active);
           break;
         }
         case 'dish_served':
@@ -329,6 +353,11 @@ const handlers = {
           break;
       }
     });
+
+    // 歇业状态可能随事件翻转（歇业厨房来新动作 → store 乐观置活；kitchen_updated 恢复）
+    // 实时同步给渲染器：幂等且只调灯光/门牌显隐，不重建场景、不重绘纹理
+    const curNow = ui.currentKitchen();
+    if (curNow && renderer.setActive) renderer.setActive(curNow.active);
 
     ui.sync(state.kitchens); // lastTs/厨师数/出餐数可能已变化，刷新切换条排序
     stageEmptyEl.style.display = ui.currentKitchen() ? 'none' : '';
@@ -347,7 +376,7 @@ const handlers = {
 if (useMock) COMock.connect(handlers);
 else CONet.connect(handlers);
 
-/* ---- 键盘切换：←/→ 前后间，数字键 1-9 直达；Esc 关引导，? 开引导 ---- */
+/* ---- 键盘切换：←/→ 前后间、数字键 1-9 直达（均按全局展示顺序，可跨项目）；Esc 关引导，? 开引导 ---- */
 window.addEventListener('keydown', (e) => {
   if (e.key === 'Escape' && !guideOverlay.hidden) { closeGuide(); e.preventDefault(); return; }
   const t = e.target;

@@ -75,6 +75,10 @@ export class KitchenStore {
     this.threadParent = new Map();  // threadId -> parentThreadId
     this.threadKitchen = new Map(); // threadId -> kitchenId
     this.threadNames = new Map();   // threadId -> thread_name（来自 session_index.jsonl）
+    // threadId -> { path, nick }：session_meta 里 subagent 的 agent_path / agent_nickname。
+    // 真实数据里协作工具 target 绝大多数是 agent_path（/root/<slug>、裸 slug）或 '/root'，
+    // 而不是 threadId——没有这个索引 _collabTarget 几乎永远解析不到（本机 952 个会话抽样核实）
+    this.threadAlias = new Map();
   }
 
   // 会话标题索引（可在回放后反复调用；名字变化时发 kitchen_updated）
@@ -205,7 +209,11 @@ export class KitchenStore {
   tick() {
     const now = Date.now();
     for (const k of this.kitchens.values()) {
+      // 歇业状态翻转要主动广播：否则前端只能等下次快照/重连才知道厨房歇业，
+      // 期间 store 又被 chef_action 乐观置活，歇业门牌随重建时机忽亮忽暗（「门牌闪烁」根因之一）
+      const wasActive = k.active;
       k.active = k.lastWrite > 0 ? (now - k.lastWrite < 10 * 60 * 1000) : k.active;
+      if (k.active !== wasActive) this.emit({ type: 'kitchen_updated', kitchen: this._pubKitchen(k) });
       for (const chef of k.chefs) {
         // cooking 与 done（出餐后定格）都要能回 idle，否则厨师出完餐永远罚站
         if ((chef.status === 'cooking' || chef.status === 'done') &&
@@ -243,7 +251,36 @@ export class KitchenStore {
       project: k.cwd ? base(k.cwd) : '', // 项目名 = cwd 目录名，供前端「项目 → 会话」分组
       chefs: k.chefs.map((c) => ({ ...c })),
       servedCount: k.servedCount, active: k.active, lastTs: k.lastTs,
+      lazy: !!k.lazy, // true=还有会话文件未完整回放（占位厨房），点击后按需加载
     };
+  }
+
+  // 占位厨房（懒加载）：只登记线程归属/父子关系/厨房壳与待加载文件清单，
+  // 不建厨师、不发事件；前端点击后由 watcher.loadKitchen() 完整回放并广播 kitchen_updated。
+  placeholderMeta(p, file, mtimeMs) {
+    const threadId = p.id || p.session_id;
+    if (!threadId) return;
+    const spawn = p.source?.subagent?.thread_spawn;
+    const parent = spawn?.parent_thread_id || p.parent_thread_id || p.forked_from_id || null;
+    if (parent && parent !== threadId) this.threadParent.set(threadId, parent);
+    const kitchenId = 't:' + (parent ? this.resolveRoot(threadId) : threadId);
+    const k = this.upsertKitchen({ id: kitchenId, cwd: p.cwd || '' });
+    if (!parent && p.cwd) {
+      // 根线程权威命名：优先 session_index 里的会话标题，拿不到再用目录名；已命名不降级
+      const real = this.threadNames.get(threadId);
+      if (real) { this._setBaseName(k, real); k.named = true; }
+      else if (!k.named) this._setBaseName(k, base(p.cwd));
+    }
+    this.threadKitchen.set(threadId, kitchenId);
+    const aliasPath = spawn?.agent_path || null;
+    const aliasNick = spawn?.agent_nickname || p.agent_nickname || null;
+    if (aliasPath || aliasNick) this.threadAlias.set(threadId, { path: aliasPath, nick: aliasNick });
+    if (!k.lazyFiles) k.lazyFiles = new Map(); // file -> { threadId, mtimeMs }
+    k.lazyFiles.set(file, { threadId, mtimeMs: mtimeMs || 0 });
+    k.lazy = true;
+    // 纯占位厨房默认歇业（历史文件）；已活跃厨房来新占位文件时不强行打烊
+    if (!k.lastWrite) k.active = false;
+    if (mtimeMs) k.lastTs = Math.max(k.lastTs || 0, mtimeMs);
   }
 
   // ---------- 真实 JSONL 记录解析 ----------
@@ -283,6 +320,10 @@ export class KitchenStore {
     }
     this.threadKitchen.set(threadId, kitchenId);
     const depth = spawn?.depth ?? 0;
+    // 协作目标解析用别名：agent_path（/root/<slug>）与 agent_nickname（如 'Locke'）
+    const aliasPath = spawn?.agent_path || null;
+    const aliasNick = spawn?.agent_nickname || p.agent_nickname || null;
+    if (aliasPath || aliasNick) this.threadAlias.set(threadId, { path: aliasPath, nick: aliasNick });
     // 厨师名统一走 128 人厨师池（upsertChef 内部 hash(threadId) 分配，厨房内撞名顺延）。
     // 不再用会话标题当主厨名（标题是厨房名/招牌，归 _setBaseName 管），也不再用
     // agent_nickname / agent_path——真实数据里它们常是「019f9e57…」这类线程 id 前缀。
@@ -341,19 +382,53 @@ export class KitchenStore {
     this.action(kid, threadId, kind, label, detail, ts, target);
   }
 
-  // 协作事件目标队友解析：args 里的 thread/agent id 或昵称 → 同厨房厨师 id。
+  // 协作事件目标队友解析：args 里的 thread/agent id、路径（/root/<slug>）、昵称 → 同厨房厨师 id。
+  // 真实数据抽样（本机 952 个会话）：
+  //   send_message     { target }      target 形态：/root（59%）、/root/<slug>（31%）、裸 slug（10%）
+  //   followup_task    { target, message }   同上，路径形态
+  //   interrupt_agent  { target }      同上
+  //   wait_agent       { targets:[threadId…] }（偶发 { ids:['/root/<slug>'] }）——数组，取第一个
   // 解析不到返回 null（前端退化为「找最近的另一位厨师」）。
   _collabTarget(threadId, args) {
-    const raw = args?.thread_id ?? args?.threadId ?? args?.target_thread_id
-      ?? args?.agent_id ?? args?.agentId ?? args?.agent ?? args?.target;
+    let raw = args?.thread_id ?? args?.threadId ?? args?.target_thread_id
+      ?? args?.agent_id ?? args?.agentId ?? args?.agent ?? args?.target
+      ?? args?.targets ?? args?.ids ?? args?.receiver ?? args?.to;
     if (raw == null || raw === '') return null;
     const kid = this.threadKitchen.get(threadId);
     const k = kid && this.kitchens.get(kid);
     if (!k) return null;
+    // wait_agent 的 targets/ids 是数组（同时等多人）：逐个尝试，走向第一个能解析到的
+    const raws = Array.isArray(raw) ? raw : [raw];
+    for (const r of raws) {
+      const hit = this._matchChef(threadId, k, r);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  _matchChef(threadId, k, raw) {
+    if (raw == null || raw === '') return null;
     const s = String(raw);
     const others = k.chefs.filter((c) => c.id !== threadId);
-    const hit = others.find((c) => c.id === s || c.id.endsWith(s) || s.endsWith(c.id))
-      || others.find((c) => c.name === s || s.includes(c.name) || c.name.includes(s));
+    // 1) 完整/截断 threadId 互配（wait_agent 的 targets 就是完整 threadId）
+    let hit = others.find((c) => c.id === s || c.id.endsWith(s) || s.endsWith(c.id));
+    // 2) 路径形态：'/root' → 根线程主厨；'/root/<slug>' / 裸 slug → agent_path 或昵称匹配
+    if (!hit) {
+      if (s === '/root' || s === 'root') {
+        hit = others.find((c) => 't:' + c.id === k.id);
+      } else {
+        const slug = s.startsWith('/') ? s.split('/').pop() : s;
+        if (slug) {
+          hit = others.find((c) => {
+            const a = this.threadAlias.get(c.id);
+            return !!a && (a.path === s || (a.path && a.path.split('/').pop() === slug)
+              || (a.nick && (a.nick === s || a.nick === slug)));
+          });
+        }
+      }
+    }
+    // 3) 厨师名宽匹配（兜底）
+    if (!hit) hit = others.find((c) => c.name === s || s.includes(c.name) || c.name.includes(s));
     return hit ? hit.id : null;
   }
 
@@ -469,10 +544,18 @@ export class KitchenStore {
           // 等队友：走到那位队友厨师旁边面对面等（前端见 action.target）
           this._act(p, ts, threadId, live, 'think', '等队友', '等待协作 agent 反馈', this._collabTarget(threadId, args));
           break;
-        case 'send_message':
-          // 给队友传话：走到目标厨师身边交谈（talk）
-          this._act(p, ts, threadId, live, 'talk', '给队友传话', args.message || args.text || '', this._collabTarget(threadId, args));
+        case 'send_message': {
+          // 给队友传话：走到目标厨师身边交谈（talk）。
+          // 真实数据里 message 正文 100% 是 gAAAAA… 密文（跨 agent 信封加密），
+          // 直接上气泡是一串乱码 → 密文时改用「给 <目标> 发了条加密消息」做展示
+          const msg = String(args.message || args.text || '');
+          const encrypted = /^gAAAAA/.test(msg) || /^[A-Za-z0-9_\-+/=]{120,}$/.test(msg);
+          const toName = base(String(args.target ?? '')) || '队友';
+          const detail = encrypted ? `给 ${toName === 'root' ? '主厨' : toName} 发了条加密消息`
+            : (msg || `给 ${toName} 传话`);
+          this._act(p, ts, threadId, live, 'talk', '给队友传话', detail, this._collabTarget(threadId, args));
           break;
+        }
         case 'write_stdin': {
           // 长命令运行期间的终端交互：chars 为空=查看输出，非空=输入
           const chars = String(args.chars ?? '');

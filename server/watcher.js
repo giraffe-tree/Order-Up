@@ -1,5 +1,8 @@
 // watcher.js — 扫描 + 实时监听 ~/.codex/sessions 下的 JSONL 会话文件
-// 启动时回放最近 48h（或最近 30 个）会话建立快照；之后增量 tail（fs.watch + 轮询兜底）。
+// 启动懒加载：默认只回放最近 replaySessions 个会话文件，且每个文件只回放
+// 「首行 session_meta + 尾部 replayLines 行」（尾部偏移用从后往前读块定位，不整文件读入）；
+// 其余旧会话只读首行建「占位厨房」（无厨师、不回放历史），前端点击后走
+// loadKitchen() 按需完整回放；占位文件之后若有新写入会自动触发完整加载（活跃会话不掉线）。
 
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
@@ -9,20 +12,24 @@ import path from 'node:path';
 const MAX_READ_BYTES = 8 * 1024 * 1024;
 // 单行上限：写入中的半截行会暂存在 pending，防止异常长行撑爆内存
 const MAX_LINE_BYTES = 2 * 1024 * 1024;
+// 读取首行（session_meta）时的最大探测字节：超出视为不可用首行
+const FIRST_LINE_MAX_BYTES = 256 * 1024;
+// 定位尾部 N 行时的反向读块大小
+const TAIL_CHUNK_BYTES = 64 * 1024;
 
 export class SessionWatcher {
   constructor({
     dir,
     store,
     pollMs = 3000,
-    windowMs = 48 * 3600 * 1000,
-    maxFiles = 30,
+    replaySessions = 5,
+    replayLines = 100,
   } = {}) {
     this.dir = dir;
     this.store = store;
     this.pollMs = pollMs;
-    this.windowMs = windowMs;
-    this.maxFiles = maxFiles;
+    this.replaySessions = replaySessions;
+    this.replayLines = replayLines;
     this.indexFile = path.resolve(dir, '..', 'session_index.jsonl'); // 会话标题索引
     this._indexMtime = 0;
     this.files = new Map();   // 文件路径 -> { offset, pending, threadId, live }
@@ -30,25 +37,27 @@ export class SessionWatcher {
     this.watcher = null;
     this.timer = null;
     this._pending = new Map(); // watch 事件去抖
+    this._loading = new Map(); // kitchenId -> 进行中的按需加载 Promise（幂等防重）
     this._stopped = false;
   }
 
   async start() {
     await this._loadNames().catch(() => {}); // 先加载标题索引，回放时即可用真名
     const list = await this._scan();
-    const now = Date.now();
-    const recent = list.filter((f) => now - f.mtimeMs <= this.windowMs);
-    const chosen = new Set([...recent, ...list.slice(0, this.maxFiles)].map((f) => f.path));
+    // 启动只回放最近 replaySessions 个会话（mtime 新到旧取前 N）
+    const chosen = new Set(list.slice(0, this.replaySessions).map((f) => f.path));
     // 按时间升序回放，父子关系更稳
     const initial = list.filter((f) => chosen.has(f.path)).sort((a, b) => a.mtimeMs - b.mtimeMs);
-    for (const f of initial) {
-      const st = { offset: 0, pending: Buffer.alloc(0), threadId: null, live: false };
-      this.files.set(f.path, st);
-      await this._readMore(f.path, f.mtimeMs).catch(() => {});
-    }
+    for (const f of initial) await this._replayFile(f).catch(() => {});
     this.store.afterReplay();
     // 回放结束，之后的新内容均为实时
     for (const st of this.files.values()) st.live = true;
+
+    // 其余旧会话：只读首行建「占位厨房」（无厨师、不回放历史），
+    // 前端点击后由 GET /api/kitchen/<id>/history → loadKitchen() 按需完整加载。
+    // 同样按 mtime 升序注册，父子归并更稳。
+    const rest = list.filter((f) => !chosen.has(f.path)).sort((a, b) => a.mtimeMs - b.mtimeMs);
+    for (const f of rest) await this._placeholderFile(f).catch(() => {});
 
     // fs.watch（macOS 支持 recursive），失败则只靠轮询
     try {
@@ -106,7 +115,7 @@ export class SessionWatcher {
         else if (e.isFile() && e.name.endsWith('.jsonl')) {
           try {
             const s = await fsp.stat(full);
-            out.push({ path: full, mtimeMs: s.mtimeMs });
+            out.push({ path: full, mtimeMs: s.mtimeMs, size: s.size });
           } catch { /* 忽略 */ }
         }
       }
@@ -132,6 +141,12 @@ export class SessionWatcher {
     for (const [fpath, st] of this.files) {
       try {
         const s = await fsp.stat(fpath);
+        if (st.placeholder) {
+          // 占位文件：被截断则对齐 offset；有新写入则自动完整加载（活跃会话不掉线）
+          if (s.size < st.offset) st.offset = s.size;
+          else if (s.size > st.offset && st.kitchenId) await this.loadKitchen(st.kitchenId).catch(() => {});
+          continue;
+        }
         if (s.size !== st.offset) await this._readMore(fpath, s.mtimeMs);
       } catch {
         // 文件被删除/轮转：摘掉跟踪状态；同名文件若重建会被当作新文件从头读
@@ -147,7 +162,157 @@ export class SessionWatcher {
       this.known.add(full);
       this.files.set(full, { offset: 0, pending: Buffer.alloc(0), threadId: null, live: true });
     }
+    const st = this.files.get(full);
+    if (st.placeholder) {
+      const s = await fsp.stat(full).catch(() => null);
+      if (!s) return;
+      if (s.size > st.offset && st.kitchenId) await this.loadKitchen(st.kitchenId).catch(() => {});
+      return;
+    }
     await this._readMore(full, Date.now());
+  }
+
+  // ---------- 启动懒加载：尾部回放 / 占位厨房 / 按需完整加载 ----------
+
+  // 回放一个选中的会话文件：首行（session_meta）先行，再回放尾部 replayLines 行。
+  // 首行必回放——否则尾部窗口不含 session_meta 时整间厨房会凭空消失。
+  async _replayFile(f) {
+    const st = { offset: 0, pending: Buffer.alloc(0), threadId: null, live: false };
+    this.files.set(f.path, st);
+    const first = await this._readFirstLine(f.path).catch(() => null);
+    if (first) try { this.store.processLine(first.obj, st); } catch { /* 忽略 */ }
+    const headEnd = first ? first.end : 0;
+    const tail = await this._tailStart(f.path, this.replayLines).catch(() => 0);
+    st.offset = Math.max(headEnd, tail);
+    await this._readToEnd(f.path, f.mtimeMs);
+  }
+
+  // 旧会话占位：读首行 session_meta 注册占位厨房（无厨师），文件 offset 置于文件尾
+  async _placeholderFile(f) {
+    const st = {
+      offset: f.size || 0, pending: Buffer.alloc(0), threadId: null,
+      live: true, placeholder: true, kitchenId: null,
+    };
+    const first = await this._readFirstLine(f.path).catch(() => null);
+    let payload = null;
+    if (first && first.obj && first.obj.type === 'session_meta'
+        && first.obj.payload && typeof first.obj.payload === 'object') {
+      payload = first.obj.payload;
+    } else {
+      // 首行不可用时用文件名里的 uuid 兜底（rollout-<ts>-<uuid>.jsonl）
+      const m = /([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})/i.exec(path.basename(f.path));
+      if (m) payload = { id: m[1], cwd: '' };
+    }
+    const threadId = payload && (payload.id || payload.session_id);
+    if (!threadId) return; // 无法定位线程：放弃占位（文件后续变更会按新文件从头读）
+    this.store.placeholderMeta(payload, f.path, f.mtimeMs);
+    st.kitchenId = this.store.threadKitchen.get(threadId) || null;
+    if (!st.kitchenId) return;
+    this.files.set(f.path, st);
+  }
+
+  // 按需完整加载某间厨房的所有未加载会话文件。
+  // 幂等：加载中复用同一 Promise；已加载（无待加载文件）直接返回现状，不重复解析。
+  async loadKitchen(kitchenId) {
+    const k = this.store.kitchens.get(kitchenId);
+    if (!k) return null;
+    if (!k.lazyFiles || !k.lazyFiles.size) return this.store._pubKitchen(k);
+    if (!this._loading.has(kitchenId)) {
+      const job = (async () => {
+        // mtime 升序回放，父子关系更稳
+        const files = [...k.lazyFiles.entries()]
+          .sort((a, b) => (a[1].mtimeMs || 0) - (b[1].mtimeMs || 0));
+        for (const [file] of files) {
+          let fst = null;
+          try { fst = await fsp.stat(file); } catch { continue; } // 文件已删除：跳过
+          const st = this.files.get(file) || {};
+          st.offset = 0;
+          st.pending = Buffer.alloc(0);
+          st.threadId = null;
+          st.live = false;
+          st.placeholder = false;
+          st.kitchenId = null;
+          this.files.set(file, st);
+          await this._readToEnd(file, fst.mtimeMs).catch(() => {});
+          st.live = true;
+        }
+        k.lazyFiles.clear();
+        k.lazy = false;
+      })();
+      this._loading.set(kitchenId, job);
+      try { await job; } finally { this._loading.delete(kitchenId); }
+    } else {
+      await this._loading.get(kitchenId).catch(() => {});
+    }
+    // 广播完整厨房（含 chefs），所有在线客户端同步刷新
+    this.store.emit({ type: 'kitchen_updated', kitchen: this.store._pubKitchen(k) });
+    return this.store._pubKitchen(k);
+  }
+
+  // 从 st.offset 分块读到文件尾（每块 ≤ MAX_READ_BYTES），带无进展保护
+  async _readToEnd(file, mtimeMs) {
+    const st = this.files.get(file);
+    if (!st) return;
+    for (;;) {
+      const before = st.offset;
+      let size = 0;
+      try { size = (await fsp.stat(file)).size; } catch { return; }
+      if (size <= st.offset) break;
+      await this._readMore(file, mtimeMs);
+      if (st.offset <= before) break; // 无进展防死循环
+    }
+  }
+
+  // 只读文件首行：返回 { obj, end }（end = 首行之后含换行的字节偏移），不可用返回 null
+  async _readFirstLine(file) {
+    const fh = await fsp.open(file, 'r');
+    try {
+      const { size } = await fh.stat();
+      if (!size) return null;
+      const len = Math.min(size, FIRST_LINE_MAX_BYTES);
+      const buf = Buffer.alloc(len);
+      const { bytesRead } = await fh.read(buf, 0, len, 0);
+      if (bytesRead <= 0) return null;
+      const nl = buf.indexOf(0x0a);
+      const end = nl >= 0 ? nl + 1 : bytesRead;
+      const text = buf.subarray(0, nl >= 0 ? nl : bytesRead).toString('utf8').trim();
+      if (!text) return null;
+      try { return { obj: JSON.parse(text), end }; } catch { return null; }
+    } finally {
+      await fh.close().catch(() => {});
+    }
+  }
+
+  // 从后往前读块定位「最后 n 行」的起始字节偏移，避免整文件读入。
+  // 文件末尾的半截行（写入中、无换行）计入 n——它会被 _readMore 暂存 pending。
+  async _tailStart(file, n) {
+    const fh = await fsp.open(file, 'r');
+    try {
+      const { size } = await fh.stat();
+      if (!size || n <= 0) return n <= 0 ? size : 0;
+      let pos = size;
+      let count = 0;
+      let firstChunk = true;
+      while (pos > 0) {
+        const len = Math.min(TAIL_CHUNK_BYTES, pos);
+        pos -= len;
+        const buf = Buffer.alloc(len);
+        await fh.read(buf, 0, len, pos);
+        if (firstChunk) {
+          firstChunk = false;
+          if (buf[len - 1] !== 0x0a) count = 1; // 末尾半截行算一行
+        }
+        for (let i = len - 1; i >= 0; i--) {
+          if (buf[i] === 0x0a) {
+            count++;
+            if (count > n) return pos + i + 1; // 最后 n 行从该换行之后开始
+          }
+        }
+      }
+      return 0; // 行数不足 n：从头回放
+    } finally {
+      await fh.close().catch(() => {});
+    }
   }
 
   // 从 offset 增量读取；按 \n 字节切分，天然兼容 UTF-8 多字节

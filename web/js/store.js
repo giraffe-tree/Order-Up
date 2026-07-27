@@ -42,6 +42,7 @@
       servedCount: k.servedCount || 0,
       active: !!k.active,
       lastTs: k.lastTs || 0,
+      lazy: !!k.lazy, // true=占位厨房：历史未完整加载，点击后按需拉取
       chefs: (k.chefs || []).map(normalizeChef)
     };
   }
@@ -187,9 +188,24 @@
       case 'kitchen_updated': {
         var inc = normalizeKitchen(ev.kitchen || { id: 'unknown' });
         k = findKitchen(state, inc.id);
-        if (!k) { state.kitchens.push(inc); k = inc; }
-        else { k.name = inc.name; k.cwd = inc.cwd; k.project = inc.project; k.active = inc.active; }
-        effects.push({ type: 'kitchen_updated', kitchenId: k.id });
+        if (!k) {
+          state.kitchens.push(inc);
+          effects.push({ type: 'kitchen_updated', kitchenId: inc.id, chefsChanged: inc.chefs.length > 0 });
+          break;
+        }
+        // 厨师阵容是否变化（按需加载完成后占位厨房补进厨师；改名/歇业事件不变）
+        var chefsChanged = k.lazy !== inc.lazy || k.chefs.length !== inc.chefs.length;
+        if (!chefsChanged) {
+          for (var ci = 0; ci < k.chefs.length; ci++) {
+            if (!inc.chefs[ci] || inc.chefs[ci].id !== k.chefs[ci].id) { chefsChanged = true; break; }
+          }
+        }
+        k.name = inc.name; k.cwd = inc.cwd; k.project = inc.project; k.active = inc.active;
+        k.lazy = inc.lazy; k.servedCount = inc.servedCount; k.lastTs = inc.lastTs;
+        // 厨师变了才整体替换（服务端为权威）；没变则保留本地对象，
+        // 避免覆盖事件流刚写入的 lastAction/status
+        if (chefsChanged) k.chefs = inc.chefs;
+        effects.push({ type: 'kitchen_updated', kitchenId: k.id, chefsChanged: chefsChanged });
         break;
       }
 
