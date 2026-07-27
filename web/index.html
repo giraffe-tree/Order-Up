@@ -20,13 +20,12 @@
 </header>
 
 <nav class="switchbar" aria-label="厨房切换条">
-  <button id="sw-prev" class="sw-arrow" type="button" title="上一间厨房（← 键）">◀</button>
-  <div id="sw-cards" class="sw-cards"></div>
-  <button id="sw-next" class="sw-arrow" type="button" title="下一间厨房（→ 键）">▶</button>
-  <label class="follow" title="开启后：别家厨房来新事件时自动跳过去；手动切换后暂停 30 秒再恢复跟随">
-    <input type="checkbox" id="follow" checked>
-    <span id="follow-text">跟随最新</span>
-  </label>
+  <div id="sw-tabs" class="sw-tabs" aria-label="项目标签" hidden></div>
+  <div class="sw-main">
+    <button id="sw-prev" class="sw-arrow" type="button" title="上一间厨房（← 键，按全局展示顺序，可跨项目）">◀</button>
+    <div id="sw-cards" class="sw-cards"></div>
+    <button id="sw-next" class="sw-arrow" type="button" title="下一间厨房（→ 键，按全局展示顺序，可跨项目）">▶</button>
+  </div>
 </nav>
 
 <main class="stage-wrap">
@@ -82,12 +81,13 @@
       <li>📖 看菜谱 = 读文件　🔪 切菜炒菜 = 改代码　🔥 开火上灶 = 跑命令</li>
       <li>📞 打电话 = 联网搜索　⚡ 高压锅 = MCP 工具　💭 想菜单 = 去菜单角翻菜单思考</li>
       <li>🔔 喊话 = 发言 / 点单　✅ 出餐 = 任务完成　💥 糊了 = 出错 / 中断</li>
-      <li>👨‍🍳 新厨师入职 = 子 agent 开工　💤 打瞌睡 = 5 秒没动静</li>
+      <li>👨‍🍳 新厨师入职 = 子 agent 开工　☕ 喝水歇脚 = 完工歇会儿　💤 打瞌睡 = 歇脚 18 秒还没动静</li>
     </ul>
     <h3>快捷键</h3>
     <ul class="guide-keys">
-      <li><kbd>←</kbd> <kbd>→</kbd> 前后切换厨房</li>
-      <li><kbd>1</kbd> – <kbd>9</kbd> 直达第 N 间厨房</li>
+      <li>🗂 顶部「项目标签」切换项目；下面的卡片条切换该项目内的会话厨房</li>
+      <li><kbd>←</kbd> <kbd>→</kbd> 前后切换厨房（按全局展示顺序，可跨项目）</li>
+      <li><kbd>1</kbd> – <kbd>9</kbd> 直达展示顺序第 N 间厨房</li>
       <li>🖱 舞台上拖拽环绕视角，滚轮缩放</li>
       <li><kbd>Esc</kbd> 关闭本说明</li>
     </ul>

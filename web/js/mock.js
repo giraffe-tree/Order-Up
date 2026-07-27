@@ -1,8 +1,8 @@
 /* ?mock=1 模式：内置模拟数据，与 plan.md SSE 契约同构。
    4 间厨房 / 3 个项目：mock-k1 与 mock-k4 同 cwd（同项目的两个会话，验证
-   「项目 → 会话」两级分组），lastTs 错开（codex-overcooked > 多端设计评审 > api-server > hugo-blog），
+   「项目标签 → 会话卡片」两级切换），lastTs 错开（codex-overcooked > 多端设计评审 > api-server > hugo-blog），
    事件按轮换模式发往各家，覆盖全部 action.kind + chef_added/chef_status/dish_served，
-   便于自测「切换条排序 / 项目分组 / 跟随最新 / 未读红点 / 订单票」。 */
+   便于自测「项目标签排序 / 标签与卡片切换 / 未读红点聚合 / 订单票」。 */
 (function (global) {
   'use strict';
 
@@ -56,8 +56,17 @@
         chefs: [
           { id: 'c-ahua', name: '阿花', role: '文档工', depth: 0, status: 'idle', color: '#447EE0', lastAction: null }
         ]
+      },
+      {
+        // 占位厨房（懒加载样例）：只有名字/cwd/项目信息，无厨师、lazy=true；
+        // 点击切换后前端调 COMock.loadKitchen 拉完整历史（模拟 GET /api/kitchen/<id>/history）
+        id: 'mock-k5', name: 'old-archive', cwd: '/Users/dev/old-archive',
+        servedCount: 0, active: false, lastTs: now - 6 * 60 * 1000, lazy: true,
+        chefs: []
       }
     ];
+
+    /* 占位厨房加载后的完整形态由模块级 loadKitchen 生成（模拟服务端按需回放结果） */
 
     var chefsByKitchen = {
       'mock-k1': [['c-amin', '阿明'], ['c-xiaoguo', '小锅']],
@@ -65,7 +74,7 @@
       'mock-k3': [['c-ahua', '阿花']],
       'mock-k4': [['c-abo', '阿卜']]
     };
-    /* 事件轮换模式：别家厨房持续来事件，测跟随跳转与红点累计 */
+    /* 事件轮换模式：别家厨房持续来事件，测红点累计与「无自动跟随」 */
     var PATTERN = ['mock-k1', 'mock-k2', 'mock-k1', 'mock-k3', 'mock-k2', 'mock-k4', 'mock-k1', 'mock-k3'];
 
     var timers = [];
@@ -133,5 +142,25 @@
     return { close: function () { timers.forEach(clearTimeout); } };
   }
 
-  global.COMock = { connect: connect };
+  /* 占位厨房按需加载（mock 版 GET /api/kitchen/<id>/history）：
+     300ms 延迟模拟网络/解析耗时，返回完整厨房（厨师到位、lazy=false、幂等） */
+  function loadKitchen(id) {
+    return new Promise(function (resolve) {
+      setTimeout(function () {
+        if (id !== 'mock-k5') { resolve(null); return; }
+        var now = Date.now();
+        resolve({
+          id: 'mock-k5', name: 'old-archive', cwd: '/Users/dev/old-archive',
+          project: 'old-archive', servedCount: 2, active: false,
+          lastTs: now - 6 * 60 * 1000, lazy: false,
+          chefs: [
+            { id: 'c-laodian', name: '老颠', role: null, depth: 0, status: 'idle', color: '#B85C48',
+              lastAction: { kind: 'serve', label: '出餐', detail: '旧账归档完成', ts: now - 6 * 60 * 1000 } }
+          ]
+        });
+      }, 300);
+    });
+  }
+
+  global.COMock = { connect: connect, loadKitchen: loadKitchen };
 })(typeof window !== 'undefined' ? window : globalThis);

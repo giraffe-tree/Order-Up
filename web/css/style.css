@@ -103,15 +103,73 @@ button { font-family: inherit; cursor: pointer; }
 }
 .stat b { color: var(--gold); font-weight: 900; }
 
-/* ---------------- 厨房切换条 ---------------- */
+/* ---------------- 厨房切换条（项目标签 → 会话卡片 两级） ---------------- */
 .switchbar {
   flex: 0 0 auto;
   display: flex;
-  align-items: center;
-  gap: 10px;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 6px;
   padding: 10px 12px;
   background: var(--wood);
   border-bottom: 4px solid #3A2415;
+}
+
+/* 第一级：项目标签排（多个项目时显示；只有一个项目时整排隐藏，保持清爽） */
+.sw-tabs {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  overflow-x: auto;
+  padding: 2px 2px 6px;
+  scrollbar-width: thin;
+}
+.sw-tabs[hidden] { display: none; }
+
+/* 项目标签（木牌 tab）：📁 项目名 + N 会话 + 聚合红点 */
+.sw-tab {
+  position: relative;
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  max-width: 260px;
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 900;
+  color: var(--ink);
+  background: var(--paper);
+  border: 3px solid var(--ink);
+  border-radius: 12px;
+  box-shadow: 0 3px 0 var(--ink);
+  transition: transform 0.1s, box-shadow 0.1s, background 0.1s;
+}
+.sw-tab:hover { transform: translateY(-2px); box-shadow: 0 5px 0 var(--ink); }
+.sw-tab.on {
+  background: var(--counter);
+  transform: translateY(2px);
+  box-shadow: 0 1px 0 var(--ink), 0 0 0 3px var(--flame);
+}
+/* 组内全部歇业：项目标签一并置灰 */
+.sw-tab.closed { filter: grayscale(0.6) brightness(0.9); opacity: 0.85; }
+.sw-tab-icon { font-size: 12px; }
+.sw-tab-name {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sw-tab-count {
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--wood);
+  white-space: nowrap;
+}
+
+/* 第二级：当前项目的会话卡片条（◀ ▶ + 横向滚动卡片） */
+.sw-main {
+  display: flex;
+  align-items: center;
+  gap: 10px;
 }
 
 .sw-arrow {
@@ -137,56 +195,6 @@ button { font-family: inherit; cursor: pointer; }
   overflow-x: auto;
   padding: 4px 2px 6px;
   scrollbar-width: thin;
-}
-
-/* 项目组容器：同一项目（cwd）的多个会话厨房归为一组（深木纹底木牌） */
-.sw-group {
-  flex: 0 0 auto;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  padding: 5px 6px 6px;
-  background: rgba(42, 33, 56, 0.28);
-  border: 3px solid #3A2415;
-  border-radius: 14px;
-  box-shadow: 0 3px 0 #3A2415;
-}
-/* 单会话项目组：透明容器 + 不渲染组标题，外观与扁平卡片一致，不臃肿 */
-.sw-group.solo {
-  padding: 0;
-  background: transparent;
-  border-color: transparent;
-  box-shadow: none;
-}
-/* 组内全部歇业：组标题一并置灰 */
-.sw-group.closed { filter: grayscale(0.6) brightness(0.9); opacity: 0.85; }
-
-.sw-group-head {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  padding: 0 4px;
-}
-.sw-group-icon { font-size: 11px; }
-.sw-group-name {
-  font-size: 11px;
-  font-weight: 900;
-  color: var(--paper);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 240px;
-}
-.sw-group-count {
-  font-size: 10px;
-  font-weight: 900;
-  color: var(--wood-light);
-  white-space: nowrap;
-}
-.sw-group-cards {
-  display: flex;
-  gap: 8px;
 }
 
 .sw-card {
@@ -252,9 +260,9 @@ button { font-family: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 
-/* 未读事件红点（卡片级 / 项目组标题聚合级共用） */
+/* 未读事件红点（卡片级 / 项目标签聚合级共用） */
 .sw-card .badge,
-.sw-group-head .badge {
+.sw-tab .badge {
   position: absolute;
   top: -9px; right: -7px;
   min-width: 22px; height: 22px;
@@ -276,40 +284,6 @@ button { font-family: inherit; cursor: pointer; }
   70% { transform: scale(1.25); }
   100% { transform: scale(1); }
 }
-
-.follow {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  font-size: 13px;
-  font-weight: 900;
-  color: var(--paper);
-  cursor: pointer;
-  white-space: nowrap;
-}
-.follow input {
-  appearance: none;
-  width: 40px; height: 22px;
-  background: var(--metal);
-  border: 3px solid #3A2415;
-  border-radius: 999px;
-  position: relative;
-  cursor: pointer;
-  transition: background 0.15s;
-}
-.follow input::after {
-  content: "";
-  position: absolute;
-  top: 1px; left: 2px;
-  width: 14px; height: 14px;
-  background: var(--paper);
-  border: 2px solid var(--ink);
-  border-radius: 50%;
-  transition: left 0.15s;
-}
-.follow input:checked { background: var(--green); }
-.follow input:checked::after { left: 16px; }
 
 /* ---------------- 主舞台（3D 画布） ---------------- */
 .stage-wrap {
@@ -799,6 +773,22 @@ button { font-family: inherit; cursor: pointer; }
   padding: 1px 6px;
   box-shadow: 0 2px 0 var(--ink);
   transform: rotate(-6deg);
+}
+
+/* ---------------- 占位厨房（懒加载，点击后按需拉取历史） ---------------- */
+.sw-card.lazy .kname { font-style: italic; opacity: 0.85; }
+.sw-card .lazy-tag {
+  position: absolute;
+  top: -9px; right: -7px;
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--paper);
+  background: var(--red);
+  border: 2px solid var(--ink);
+  border-radius: 6px;
+  padding: 1px 6px;
+  box-shadow: 0 2px 0 var(--ink);
+  transform: rotate(5deg);
 }
 
 /* ---------------- 首次引导浮层 ---------------- */
