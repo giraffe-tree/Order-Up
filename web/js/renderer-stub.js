@@ -87,6 +87,11 @@ export class KitchenRenderer {
     this.draw();
   }
 
+  // 歇业状态实时切换（与 3D 渲染器同契约；stub 只记状态）
+  setActive(active) {
+    if (this.kitchen) this.kitchen.active = active !== false;
+  }
+
   resize() {
     var w = this.container.clientWidth || 640;
     var h = this.container.clientHeight || 400;

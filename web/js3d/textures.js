@@ -234,15 +234,109 @@ export function floorTexture(gw, gh, { light = 0xD2A06B, dark = 0x96663C, grout 
   return t;
 }
 
-// 厨房外大地面：中心暖木 → 边缘压暗的径向渐变（避免画面发灰发平）
-export function outerGroundTexture({ inner = 0x54402C, outer = 0x2E1F13 } = {}) {
+// 厨房外大地面：中心被厨房灯光烘暖 → 边缘没入夜色的径向渐变，
+// 中环洒石板 / 沙砾 / 草叶碎点（seed 固定，每次构建一致），夜色小院质感
+export function outerGroundTexture({ inner = 0x5C4630, outer = 0x2E1F13 } = {}) {
   const [c, g] = makeCanvas(512, 512);
-  const grad = g.createRadialGradient(256, 256, 60, 256, 256, 360);
+  const rnd = mulberry32(20260730);
+  const grad = g.createRadialGradient(256, 256, 50, 256, 256, 360);
   const [r1, g1, b1] = hexRGB(inner), [r2, g2, b2] = hexRGB(outer);
   grad.addColorStop(0, `rgb(${r1},${g1},${b1})`);
+  grad.addColorStop(0.55, shade(inner, 0.68));
   grad.addColorStop(1, `rgb(${r2},${g2},${b2})`);
   g.fillStyle = grad;
   g.fillRect(0, 0, 512, 512);
+  // 中环石板：小扁石块绕中心散布（避开厨房所在的中心区域；小而淡，勿成波点）
+  for (let i = 0; i < 130; i++) {
+    const a = rnd() * Math.PI * 2;
+    const r = 100 + rnd() * 145; // 距中心 px（世界 ≈ px / 8.5）
+    const x = 256 + Math.cos(a) * r, y = 256 + Math.sin(a) * r;
+    const w = 3.5 + rnd() * 6, h = 2.5 + rnd() * 4;
+    const alpha = 0.03 + rnd() * 0.05;
+    g.fillStyle = rnd() > 0.5 ? `rgba(214,170,120,${alpha})` : `rgba(20,12,8,${alpha})`;
+    g.beginPath(); g.ellipse(x, y, w, h, rnd() * 3, 0, Math.PI * 2); g.fill();
+  }
+  // 沙砾碎点
+  for (let i = 0; i < 260; i++) {
+    const x = rnd() * 512, y = rnd() * 512;
+    if (Math.hypot(x - 256, y - 256) < 78) continue; // 厨房底下不画
+    g.fillStyle = rnd() > 0.5
+      ? `rgba(226,190,140,${0.05 + rnd() * 0.09})`
+      : `rgba(16,10,6,${0.06 + rnd() * 0.10})`;
+    g.fillRect(x, y, 1 + rnd() * 2, 1 + rnd() * 2);
+  }
+  // 草叶小簇（夜色里很淡的绿）
+  for (let i = 0; i < 46; i++) {
+    const a = rnd() * Math.PI * 2, r = 118 + rnd() * 132;
+    const x = 256 + Math.cos(a) * r, y = 256 + Math.sin(a) * r;
+    g.strokeStyle = `rgba(96,128,74,${0.10 + rnd() * 0.12})`;
+    g.lineWidth = 1.2;
+    for (let k = 0; k < 3; k++) {
+      g.beginPath(); g.moveTo(x, y);
+      g.lineTo(x + (rnd() - 0.5) * 7, y - 3 - rnd() * 5); g.stroke();
+    }
+  }
+  return toTexture(c);
+}
+
+// 黄昏天空穹顶：垂直渐变（深梅紫夜空 → 琥珀余晖带 → 暖暗夜色）。
+// 相机俯角 45–70° 恒朝下看，穹顶只在「赤道附近」一线露出，
+// 故余晖带刻意压在下半球上缘（v≈0.36–0.5），星星散布在其上方可窥见。
+// canvas 顶行 = 球顶（v=1）。
+export function skyDomeTexture({ w = 1024, h = 512 } = {}) {
+  const [c, g] = makeCanvas(w, h);
+  const grad = g.createLinearGradient(0, 0, 0, h);
+  grad.addColorStop(0.00, '#241C34'); // 天顶·深梅紫
+  grad.addColorStop(0.22, '#3A2A44');
+  grad.addColorStop(0.33, '#6B4046'); // 暮色带
+  grad.addColorStop(0.40, '#C97B4A'); // 琥珀余晖（贴地平线，正好落在可见一线）
+  grad.addColorStop(0.46, '#8A5238');
+  grad.addColorStop(0.54, '#463023'); // 以下渐暗，与外地面 / 雾色无缝衔接
+  grad.addColorStop(0.66, '#2E2018');
+  grad.addColorStop(1.00, '#241A12');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, w, h);
+  const rnd = mulberry32(20260801);
+  // 星星：散布在余晖带上方的夜空，大小 / 亮度不一，少数亮星带十字星芒
+  for (let i = 0; i < 180; i++) {
+    const x = rnd() * w, y = rnd() * h * 0.36;
+    const a = 0.22 + rnd() * 0.72;
+    const r = 0.6 + rnd() * 1.3;
+    g.fillStyle = `rgba(255,242,214,${a.toFixed(2)})`;
+    g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); g.fill();
+    if (rnd() > 0.88) {
+      g.fillStyle = `rgba(255,242,214,${(a * 0.45).toFixed(2)})`;
+      g.fillRect(x - r * 3, y - 0.6, r * 6, 1.2);
+      g.fillRect(x - 0.6, y - r * 3, 1.2, r * 6);
+    }
+  }
+  // 暮色薄云：余晖带中被照亮的柔软横椭圆
+  for (let i = 0; i < 8; i++) {
+    const cx = rnd() * w, cy = h * (0.30 + rnd() * 0.14);
+    const cw = 90 + rnd() * 180, ch = 10 + rnd() * 15;
+    const cg = g.createRadialGradient(0, 0, 0, 0, 0, 1);
+    cg.addColorStop(0, `rgba(255,196,136,${0.13 + rnd() * 0.08})`);
+    cg.addColorStop(0.7, 'rgba(226,148,104,0.06)');
+    cg.addColorStop(1, 'rgba(226,148,104,0)');
+    g.save();
+    g.translate(cx, cy);
+    g.scale(cw, ch);
+    g.fillStyle = cg;
+    g.beginPath(); g.arc(0, 0, 1, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+  return toTexture(c);
+}
+
+// 暖光晕圆片（路灯光池贴地 / 萤火虫 / 灯笼光晕精灵）：中心亮 → 边缘透明
+export function glowDiscTexture({ size = 128, inner = 'rgba(255,226,166,0.9)', mid = 'rgba(255,186,106,0.30)' } = {}) {
+  const [c, g] = makeCanvas(size, size);
+  const grad = g.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  grad.addColorStop(0, inner);
+  grad.addColorStop(0.45, mid);
+  grad.addColorStop(1, 'rgba(255,186,106,0)');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, size, size);
   return toTexture(c);
 }
 
