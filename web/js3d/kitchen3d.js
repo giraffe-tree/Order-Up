@@ -1,13 +1,15 @@
 // KitchenRenderer —— Codex Overcooked 3D 厨房渲染器（API 契约见 plan.md 第二阶段）
 //   const r = new KitchenRenderer(containerEl);
 //   r.setKitchen(kitchen, chefs); r.addChef(chef); r.chefAction(chefId, action);
-//   r.chefStatus(chefId, status); r.dishServed(dish); r.resize(); r.dispose();
+//   r.chefStatus(chefId, status); r.dishServed(dish); r.setActive(active); r.resize(); r.dispose();
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL, CHEF_COLORS } from './palette.js';
 import { FX } from './fx.js';
 import { ChefActor } from './chef.js';
 import { plankTexture } from './textures.js';
 import { buildDecor } from './decor.js';
+import { buildBackdrop } from './backdrop.js';
+import { buildDining } from './dining.js';
 import {
   buildKitchen, disposeKitchen, findPath, nearestCell, cellToWorld,
   DOOR_CELLS, SPAWN, REST_CELLS, GW, GH,
@@ -15,7 +17,13 @@ import {
 
 const MAX_VISIBLE = 12;             // 同屏厨师上限
 const REST_TIMEOUT = 60;            // 休息区打瞌睡超过此秒数 → 起身下班走出厨房（可配置）
+const LOITER_MAX = 18;              // 完工后原地歇脚（喝水/擦汗）超过此秒数 → 走回休息区（可配置）
 const DEG = Math.PI / 180;
+
+// 交谈中被找厨师的回应气泡（按回合轮替，配合点头/抬手小动作）
+const CHAT_ACKS = ['收到！', '好嘞～', '嗯嗯！', '明白！', '马上就好', 'OK！'];
+const TALK_MAX = 14;   // talk 交谈最长持续秒数（超时兜底，正常由发起人的下个事件结束）
+const WAIT_MAX = 120;  // wait 等待最长持续秒数（正常由服务器 idle tick 或新事件结束）
 
 // action.kind → 工位类型
 const KIND_TO_STATION = {
@@ -32,6 +40,9 @@ export class KitchenRenderer {
     this.restAssign = new Map(); // chefId → rest cell index
     this.stoveFlip = false;
     this._simT = 0;             // 模拟时钟（秒，随 _update 累积；step() 离线步进也生效）
+    // 进行中的协作会话：发起人 chefId → { targetId, mode('talk'|'wait'), label, start, until, ph, turns, resume }
+    // resume 是被找厨师的现场快照（state/workKind/station/label），交谈结束后原样恢复
+    this._convos = new Map();
 
     // --- 渲染器 ---
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -49,6 +60,9 @@ export class KitchenRenderer {
     container.appendChild(el);
 
     this.scene = new THREE.Scene();
+    // 厨房外氛围背景（黄昏穹顶 / 栅栏 / 路灯 / 远景剪影 / 萤火虫）：
+    // scene 级一次性构建，不随 setKitchen 重建
+    this.backdrop = buildBackdrop(this.scene);
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 120);
 
     // --- 灯光：暖色半球光 + 方向光（开阴影）；吊灯/火把点光由 decor 提供并闪烁 ---
@@ -97,7 +111,10 @@ export class KitchenRenderer {
     for (const [, c] of this.chefs) if (c.actor) c.actor.dispose(this.scene);
     this.chefs.clear();
     this.restAssign.clear();
+    this._convos.clear(); // 跨厨房的交谈会话一并作废
+    this._disposeSigns(); // 旧标牌必须从场景移除：否则每次重建都叠加共面副本（泄漏 + 歇业牌残留显示）
     if (this.decor) { this.decor.dispose(); this.decor = null; }
+    if (this.dining) { this.dining.dispose(); this.dining = null; } // 餐厅区随厨房重建（客人/等位队列一并清场）
     if (this.built) { disposeKitchen(this.scene, this.built); this.built = null; }
     this.stoveEmitters.clear();
     this.fx.emitters.length = 0; // 发射器随厨房重建，避免跨厨房累积
@@ -105,10 +122,12 @@ export class KitchenRenderer {
     this.kitchenData = kitchen || { id: 'k', name: '厨房', active: true };
     this.built = buildKitchen(this.scene);
     this.decor = buildDecor(this.scene, { wallN: -(GH - 1) / 2 - 0.66 });
+    this.dining = buildDining(this.scene, this.fx); // 北墙外餐厅区（出餐第二程接力）
     this._indexStations();
     this._buildSigns();
     this._registerStationFX();
-    this._applyActive(this.kitchenData.active !== false);
+    this._active = this.kitchenData.active !== false;
+    this._applyActive(this._active);
 
     // 厨师从门口依次小跑入场。
     // 早已下班的（非 cooking 且最近动作距今超过 REST_TIMEOUT）不再入场——
@@ -137,8 +156,13 @@ export class KitchenRenderer {
       this._applyVisibilityCap();
     }
     if (!entry || !action) return;
+    // 协作会话生命周期：发起人有了新动作 → 交谈结束（被找厨师恢复原状）；
+    // 被找厨师自己来了新活 → 作废旧现场快照（新动作接管，不再恢复）
+    this._endConvo(chefId);
+    this._dropConvoForTarget(chefId);
     entry.data.lastAction = action;
     entry.restSince = null;   // 有新动作 → 重置下班倒计时
+    entry.loiterSince = null; // 重置歇脚计时
     entry.leaving = false;    // 正在出门的立即返岗（后续 goTo 会覆盖走向门口的路径）
     if (entry.data.status === 'done') entry.data.status = 'cooking';
     this._applyVisibilityCap(); // 最新动作优先：触发重排，干活厨师抢到屏幕名额
@@ -155,7 +179,7 @@ export class KitchenRenderer {
     }
     if (kind === 'burn') { leaveStation(); actor._pendingSpot = null; actor.burn(action.label); return; }
     if (kind === 'join') { leaveStation(); actor._pendingSpot = null; this._runIn(actor, action.label); return; }
-    if (kind === 'idle') { this._sendToRest(actor, true); return; }
+    if (kind === 'idle') { this._startLoiter(actor, entry); return; }
 
     // 协作动作：talk（传话/派活/叫停）与带 target 的 think（等队友）
     // → 离开工位，走到目标队友厨师身旁，面对面交谈/等待
@@ -175,12 +199,14 @@ export class KitchenRenderer {
   chefStatus(chefId, status) {
     const entry = this.chefs.get(chefId);
     if (!entry) return;
+    this._endConvo(chefId);          // 状态翻转（如 idle）同样结束其发起的交谈
+    this._dropConvoForTarget(chefId);
     entry.data.status = status;
-    if (status === 'cooking') entry.restSince = null;
+    if (status === 'cooking') { entry.restSince = null; entry.loiterSince = null; }
     this._applyVisibilityCap();
     if (!entry.visible || !entry.actor) return;
     const actor = entry.actor;
-    if (status === 'idle') this._sendToRest(actor, true);
+    if (status === 'idle') { this._startLoiter(actor, entry); return; }
     else if (status === 'done') {
       entry.restSince = this._simT; // 完工坐下也开始下班倒计时
       actor.cancelWork();
@@ -217,6 +243,8 @@ export class KitchenRenderer {
     }
     if (!from) from = new THREE.Vector3(0, 1.3, -(GH - 1) / 2 + 0.6); // 找不到厨师：从出餐台起飞
     this.fx.dishServed(from, to, dish && dish.name);
+    // 第二程接力：菜落窗台后由餐厅区排队送上餐桌（客人用餐 → 满意离开 → 新客人入场）
+    if (this.dining) this.dining.serveDish(dish && dish.name);
     if (this.kitchenData) this.kitchenData.servedCount = (this.kitchenData.servedCount || 0) + 1;
   }
 
@@ -237,12 +265,11 @@ export class KitchenRenderer {
     this.chefs.clear();
     ChefActor.disposeShared();
     if (this.decor) { this.decor.dispose(); this.decor = null; }
+    if (this.backdrop) { this.backdrop.dispose(); this.backdrop = null; }
+    if (this.dining) { this.dining.dispose(); this.dining = null; }
     if (this.built) { disposeKitchen(this.scene, this.built); this.built = null; }
     this.fx.dispose();
-    if (this._signs) for (const s of this._signs) {
-      if (s.material.map) s.material.map.dispose();
-      s.material.dispose(); s.geometry.dispose();
-    }
+    this._disposeSigns();
     this.renderer.dispose();
     if (this.renderer.domElement.parentNode === this.container) {
       this.container.removeChild(this.renderer.domElement);
@@ -318,18 +345,86 @@ export class KitchenRenderer {
       new THREE.Vector3(0, 2.82, -(GH - 1) / 2 - 0.32), 0,
       { fontSize: 44, bg: '#3A2E40', maxLen: 12, ss: 3 });
     this.nameSign.rotation.x = -0.14;
-    // 歇业中（挂在门楣外立面，默认隐藏）
-    this.closedSign = mkSign('歇业中', 1.7, 0.55, new THREE.Vector3(0, 1.72, S + 0.2), 0, { fontSize: 48 });
+    // 歇业中（双绳悬挂在门楣下沿，默认隐藏）
+    this.closedSign = this._buildClosedSign(S);
     this.closedSign.visible = false;
-    // 后厨 +N（门右侧外墙，默认隐藏）
-    this.backSign = mkSign('后厨 +0', 1.3, 0.42, new THREE.Vector3(2.35, 1.1, S + 0.2), 0, { fontSize: 40 });
+    // 后厨 +N（门右侧外墙，默认隐藏；离墙面留足距离避免 z-fighting）
+    this.backSign = mkSign('后厨 +0', 1.3, 0.42, new THREE.Vector3(2.35, 1.1, S + 0.26), 0, { fontSize: 40 });
     this.backSign.visible = false;
+  }
+
+  // 歇业挂牌：带真实厚度的木板 + 双绳挂在门楣下沿。
+  // 旧版是 z=S+0.2 的薄面片，与门楣前立面（S+0.17）竖直方向重叠且间距仅 0.03，
+  // 低深度精度环境/斜视角度下会 z-fighting 闪烁；现在板顶低于门楣下沿、
+  // 板背离门楣前立面 0.075、离南墙外立面 0.095，任何深度精度下都稳定。
+  _buildClosedSign(S) {
+    const g = new THREE.Group();
+    const W = 1.7, H = 0.55, T = 0.05; // 木板宽/高/厚
+    const PY = 1.48, PZ = S + 0.27;    // 板心：顶边 1.755（门楣下沿 1.88 之下）
+    // 画布分辨率与板面同宽高比（逻辑高 96px），与 mkSign 同一套清晰度规则
+    const tex = plankTexture('歇业中', { w: Math.max(2, Math.round(96 * W / H)), h: 96, fontSize: 48 });
+    const wood = new THREE.MeshBasicMaterial({ color: 0x6B4527 }); // 侧面/背面素木色
+    const face = new THREE.MeshBasicMaterial({ map: tex, transparent: true });
+    const plank = new THREE.Mesh(new THREE.BoxGeometry(W, H, T),
+      [wood, wood, wood, wood, face, wood]); // 仅 +z 面贴字
+    plank.position.set(0, PY, PZ);
+    g.add(plank);
+    // 双绳：从板顶挂到门楣下沿（绳在门楣前立面之前 0.10，看上去就像钉在门楣上）
+    const topY = PY + H / 2, hangTo = 1.90;
+    const ropeGeo = new THREE.CylinderGeometry(0.02, 0.02, hangTo - topY, 6);
+    const ropeMat = new THREE.MeshBasicMaterial({ color: 0xA08155 }); // 麻绳色，暗色门洞里也能读出「双绳悬挂」
+    for (const rx of [-0.55, 0.55]) {
+      const rope = new THREE.Mesh(ropeGeo, ropeMat);
+      rope.position.set(rx, (topY + hangTo) / 2, PZ);
+      g.add(rope);
+    }
+    this.scene.add(g);
+    return g;
+  }
+
+  // 移除并释放全部标牌（平面木牌走 _signs；歇业挂牌是 Group 单独释放）
+  _disposeSigns() {
+    if (this._signs) for (const s of this._signs) {
+      this.scene.remove(s);
+      if (s.material.map) s.material.map.dispose();
+      s.material.dispose(); s.geometry.dispose();
+    }
+    this._signs = [];
+    if (this.closedSign) {
+      this.scene.remove(this.closedSign);
+      const geoDone = new Set(), matDone = new Set();
+      this.closedSign.traverse((o) => {
+        if (o.geometry && !geoDone.has(o.geometry)) { geoDone.add(o.geometry); o.geometry.dispose(); }
+        if (o.material) {
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) {
+            if (matDone.has(m)) continue;
+            matDone.add(m);
+            if (m.map) m.map.dispose();
+            m.dispose();
+          }
+        }
+      });
+      this.closedSign = null;
+    }
+    this.nameSign = null;
+    this.backSign = null;
   }
 
   // 厨房改名：只重绘名牌纹理，不重建场景
   setKitchenName(name) {
     if (this.kitchenData) this.kitchenData.name = name;
     if (this.nameSign) this._setSignText(this.nameSign, `🍳 ${name || '厨房'}`);
+  }
+
+  // 歇业状态实时切换（不重建场景）：幂等——仅在实际变化时应用，
+  // 状态抖动（重复事件/重复 kitchen_updated）不会导致灯光与门牌反复横跳
+  setActive(active) {
+    const a = active !== false;
+    if (this.kitchenData) this.kitchenData.active = a;
+    if (this._active === a) return;
+    this._active = a;
+    this._applyActive(a);
   }
 
   _setSignText(mesh, text, opts = {}) {
@@ -351,6 +446,8 @@ export class KitchenRenderer {
       this.renderer.setClearColor(0x1E1510);
     }
     if (this.decor) this.decor.setDim(active ? 1 : 0.12); // 吊灯/火把同步压暗
+    if (this.backdrop) this.backdrop.setDim(active ? 1 : 0.35); // 背景氛围同步收敛（略留夜色活气）
+    if (this.dining) this.dining.setDim(active ? 1 : 0.35); // 餐厅区同步：蜡烛收敛、不再迎客
     if (this.closedSign) this.closedSign.visible = !active;
   }
 
@@ -361,7 +458,7 @@ export class KitchenRenderer {
     actor.placeAt(SPAWN.x, SPAWN.z + delay * 2); // 门外排队，错开入场
     actor.group.visible = false;
     this.scene.add(actor.group);
-    this.chefs.set(chef.id, { data: chef, actor, visible: true, spawnDelay: delay, restSince: null, leaving: false });
+    this.chefs.set(chef.id, { data: chef, actor, visible: true, spawnDelay: delay, restSince: null, loiterSince: null, leaving: false });
     actor.state = 'rest';
   }
 
@@ -454,7 +551,20 @@ export class KitchenRenderer {
     actor.goTo(path, { speed: 3.0, onArrive: () => { if (sleep) actor.sleep(); } });
   }
 
+  // 完工/空闲的连贯过渡：不立刻跑回休息区，先在原地歇脚（喝水/擦汗/东张西望），
+  // 超过 LOITER_MAX 秒仍无新事件才慢慢走回休息区打瞌睡（由 _update 扫描驱动）。
+  _startLoiter(actor, entry) {
+    if (actor.station) { this._stationFX(actor.station, false); actor.station = null; }
+    actor._pendingSpot = null;
+    entry.loiterSince = this._simT;
+    entry.restSince = null; // 歇脚期间不计下班倒计时（入睡后才开始）
+    if (actor.state !== 'break') actor.takeBreak();
+  }
+
   // 协作：走到另一位厨师身旁面对面交谈（talk）/等待（wait）。
+  // 双向交互：被找的厨师会暂停手中活、转身面对发起人（睡觉/摘帽先被叫醒），
+  // 交谈中双方气泡交替、对方点头/抬手回应；结束后对方回到原工位继续原动作（继续休息）。
+  // wait 模式不打扰对方干活，对方偶尔回头招手示意（chef.js 的 _watcher）。
   // 目标优先取 action.target（队友 threadId）；拿不到就找同厨房最近的另一位可见厨师
   // （正在干活的优先）。厨房里没有别人时退回旧行为：talk→出餐口喊话，wait→原地思考。
   _sendToChef(actor, action, mode) {
@@ -468,6 +578,7 @@ export class KitchenRenderer {
       const ap = actor.group.position;
       for (const [id, c] of this.chefs) {
         if (id === actor.id || !c.visible || !c.actor || c.spawnDelay != null || c.leaving) continue;
+        if (this._isConvoTarget(id)) continue; // 已在跟别人交谈的不抢
         const p = c.actor.group.position;
         const d = (p.x - ap.x) ** 2 + (p.z - ap.z) ** 2;
         const score = c.data.status === 'cooking' ? d * 0.25 : d; // 干活的优先
@@ -499,11 +610,30 @@ export class KitchenRenderer {
       speed: 3.8,
       onArrive: () => {
         const ta = targetEntry.actor;
-        const tpos = ta.group.position;
-        actor.faceTowards(tpos.x, tpos.z);
-        // 队友转身面向来人（正在赶路的除外，避免打断走位）
-        if (ta.state !== 'walk' && ta.state !== 'enter') {
+        if (!ta) return;
+        actor.faceTowards(ta.group.position.x, ta.group.position.z);
+        // 被找厨师的现场快照：交谈结束后原样恢复（工位/动作/睡觉/摘帽定格）
+        const st = ta.state;
+        // 赶路/入场/慌乱（burn）/已在跟别人交谈的厨师不打断，只保持现有转身行为
+        const canEngage = st !== 'walk' && st !== 'enter' && st !== 'burn' && st !== 'chat';
+        const convo = {
+          targetId: targetEntry.data.id, mode, label: action.label || '',
+          start: this._simT, until: this._simT + (mode === 'wait' ? WAIT_MAX : TALK_MAX),
+          ph: -1, turns: 0,
+          resume: canEngage ? { state: st, workKind: ta.workKind, station: ta.station, label: ta.bubbleText } : null,
+        };
+        this._convos.set(actor.id, convo);
+        if (canEngage) {
           ta.faceTowards(actor.group.position.x, actor.group.position.z);
+          if (mode === 'wait') {
+            // 等队友：不打扰对方干活；对方干活时偶尔回头招手（chef.js work 分支的 _watcher）
+            ta._watcher = { x: actor.group.position.x, z: actor.group.position.z };
+          } else {
+            // 交谈：对方暂停手中活面对面倾听；睡觉/摘帽定格的先叫醒，结束后恢复
+            if (st === 'sleep' || st === 'sit') ta.wake();
+            ta.pauseForChat(actor.group.position.x, actor.group.position.z);
+            ta.setBubble(CHAT_ACKS[0]);
+          }
         }
         if (mode === 'wait') actor.think(action.label);
         else actor.startWork('speak', null, action.label); // 交谈：喊话动作+气泡，不占工位
@@ -511,10 +641,53 @@ export class KitchenRenderer {
     });
   }
 
+  // 发起人视角结束协作会话：talk 模式把被找厨师原样放回现场（回工位/继续睡觉/继续定格）；
+  // wait 模式只需摘掉对方身上的观望标记（对方从未被打断）
+  _endConvo(initiatorId, { resume = true } = {}) {
+    const cv = this._convos.get(initiatorId);
+    if (!cv) return;
+    this._convos.delete(initiatorId);
+    // 发起人若还站在原地喊话，把被交替隐去的气泡还原（去向交给 idle/后续事件驱动）
+    const ia = this.chefs.get(initiatorId)?.actor;
+    if (ia && ia.state === 'work' && ia.workKind === 'speak' && !ia.station) {
+      ia.setBubble(cv.mode === 'talk' ? (cv.label || null) : ia.bubbleText);
+    }
+    const ta = this.chefs.get(cv.targetId)?.actor;
+    if (!ta) return;
+    ta._watcher = null;
+    if (cv.mode === 'wait' || !cv.resume) return;
+    if (ta.state !== 'chat') return; // 对方已被别的事件接管
+    ta.endChat();
+    const r = cv.resume;
+    if (!resume) return;
+    if (r.state === 'work') ta.startWork(r.workKind, r.station, r.label); // 回到原工位继续原动作
+    else if (r.state === 'think') ta.think(r.label);
+    else if (r.state === 'sleep') ta.sleep(); // 继续休息
+    else if (r.state === 'sit') ta.sitDone();
+    // rest 等站立状态：endChat 已复位，去向交给 idle/后续事件驱动
+  }
+
+  // 被找厨师视角：它自己来了新动作/状态 → 作废旧现场（新行为接管，不再恢复旧现场）
+  _dropConvoForTarget(targetId) {
+    for (const [iid, cv] of this._convos) {
+      if (cv.targetId === targetId) {
+        cv.resume = null;
+        this._endConvo(iid, { resume: false });
+      }
+    }
+  }
+
+  _isConvoTarget(chefId) {
+    for (const [, cv] of this._convos) if (cv.targetId === chefId) return true;
+    return false;
+  }
+
   // 休息超时 → 起身从厨房门口走出去下班（入职动画的反向），走出门后从场景移除
   _exitChef(id) {
     const entry = this.chefs.get(id);
     if (!entry || !entry.actor) return;
+    this._endConvo(id, { resume: false });   // 下班走人：其发起的交谈即刻收尾
+    this._dropConvoForTarget(id);            // 正在跟别人交谈的对方也解除绑定
     entry.leaving = true;
     const actor = entry.actor;
     if (actor.station) this._stationFX(actor.station, false);
@@ -531,6 +704,8 @@ export class KitchenRenderer {
   _removeChef(id) {
     const entry = this.chefs.get(id);
     if (!entry) return;
+    this._endConvo(id, { resume: false });
+    this._dropConvoForTarget(id);
     if (entry.actor) entry.actor.dispose(this.scene);
     this.chefs.delete(id);
     this.restAssign.delete(id);
@@ -669,6 +844,26 @@ export class KitchenRenderer {
         }
       }
     }
+    // 协作会话：talk 模式双方气泡交替（发起人说一句 ↔ 对方点头回一句）+ 超时兜底结束
+    for (const [iid, cv] of this._convos) {
+      if (this._simT > cv.until) { this._endConvo(iid); continue; }
+      if (cv.mode !== 'talk' || !cv.resume) continue;
+      const ia = this.chefs.get(iid)?.actor;
+      const ta = this.chefs.get(cv.targetId)?.actor;
+      if (!ia || !ta || ta.state !== 'chat' || ia.state !== 'work') continue;
+      const ph = Math.floor((this._simT - cv.start) / 1.7) % 2;
+      if (ph === cv.ph) continue;
+      cv.ph = ph;
+      if (ph === 0) { ia.setBubble(cv.label || '💬'); ta.setBubble(null); }
+      else { ia.setBubble(null); ta.setBubble(CHAT_ACKS[++cv.turns % CHAT_ACKS.length]); }
+    }
+    // 歇脚超时：原地歇脚超过 LOITER_MAX 秒仍无新事件 → 走回休息区打瞌睡
+    for (const [, c] of this.chefs) {
+      if (c.loiterSince == null || c.leaving || c.spawnDelay != null || !c.actor) continue;
+      if (this._simT - c.loiterSince <= LOITER_MAX) continue;
+      c.loiterSince = null;
+      if (c.actor.state === 'break') this._sendToRest(c.actor, true);
+    }
     // 休息超时退场：前厅的走门口下班动画；藏在后厨的直接移除
     for (const [id, c] of this.chefs) {
       if (c.restSince == null || c.leaving) continue;
@@ -683,6 +878,8 @@ export class KitchenRenderer {
     }
     this.fx.update(dt);
     if (this.decor) this.decor.update(t); // 吊灯/火把光晕闪烁
+    if (this.backdrop) this.backdrop.update(t); // 萤火虫漂移 / 路灯光晕呼吸
+    if (this.dining) this.dining.update(dt, this._simT); // 餐厅区：客人入场/用餐/离席、窗台排队上菜
     this._updateCamera(t);
   }
 }

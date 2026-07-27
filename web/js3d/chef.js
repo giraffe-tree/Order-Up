@@ -49,7 +49,7 @@ export class ChefActor {
     this.fx = fx;
     this.color = new THREE.Color(chef.color || '#447EE0');
     this.group = new THREE.Group();
-    this.state = 'enter';        // enter|walk|work|think|burn|sleep|sit|rest
+    this.state = 'enter';        // enter|walk|work|think|burn|sleep|sit|rest|chat（被队友找上倾听）
     this.path = [];
     this.onArrive = null;
     this.arriveAction = null;
@@ -306,6 +306,55 @@ export class ChefActor {
     this.setBubble(label || '思考中');
   }
 
+  // 完工后的间歇：原地歇脚——待机小动作（东张西望/擦汗/颠勺）+ 每隔几秒举杯喝水。
+  // 新动作到来时由 goTo/startWork 等经 cancelWork 收杯复位，无需显式 endBreak。
+  takeBreak() {
+    this.cancelWork();
+    this.state = 'break';
+    this._breakT = 0;
+    this._drinkT = null;
+    this._drinkAt = 2 + Math.random() * 3; // 首次喝水 2-5 秒后
+    this.setMark(null);
+    this.setBubble(null);
+  }
+
+  // 小水杯（惰性创建，几何/材质走共享缓存）：挂在右手套处，喝水时随手臂举到嘴边
+  _takeCup() {
+    if (!this._cup) {
+      const cup = new THREE.Mesh(
+        geo('cup', () => new THREE.CylinderGeometry(0.05, 0.04, 0.1, 10)),
+        mat('cup', () => new THREE.MeshStandardMaterial({ color: 0xF5EBD7, flatShading: true, roughness: 0.9 })),
+      );
+      cup.position.set(0, -0.26, 0.06);
+      this._cup = cup;
+      this.armR.add(cup);
+    }
+    return this._cup;
+  }
+
+  // 被队友找上交谈：暂停当前动作，转身面对来人倾听（点头/偶尔抬手回应）。
+  // 不打断走位/入场/慌乱中的厨师（由调用方判断 state 后再调）；
+  // 睡觉/摘帽坐姿由调用方先 wake()；工位引用清空但特效由渲染器持有，恢复时重发 startWork 即可。
+  pauseForChat(x, z) {
+    this.state = 'chat';
+    this._chatT = 0;
+    this.workKind = null;
+    this.station = null;
+    this.path = [];
+    this.setMark(null);
+    this.resetPose();
+    if (this._zzz) for (const zz of this._zzz) { zz.s.visible = false; zz.t = 99; }
+    if (x !== undefined) this.faceTowards(x, z);
+  }
+
+  // 交谈结束且没有更早的现场可回时的最小复位（有现场时由渲染器重发 startWork/sleep/…）
+  endChat() {
+    if (this.state !== 'chat') return;
+    this.state = 'rest';
+    this.setBubble(null);
+    this.resetPose();
+  }
+
   burn(label) {
     this.cancelWork();
     this.state = 'burn';
@@ -351,9 +400,12 @@ export class ChefActor {
     this.station = null;
     this.path = [];
     this.onArrive = null;
+    this._watcher = null; // 「等队友」的观望者随任何动作切换解除
     this._idle.kind = null;
     this._idle.t = 3 + Math.random() * 6;
     this._glance.active = false;
+    if (this._cup) this._cup.visible = false; // 歇脚水杯收起
+    this._drinkT = null;
     this.resetPose();
     if (this._zzz) for (const zz of this._zzz) { zz.s.visible = false; zz.t = 99; }
   }
@@ -458,7 +510,35 @@ export class ChefActor {
           pos.y = Math.abs(Math.sin(t * 6)) * 0.05;
           this.armL.rotation.x = this.armR.rotation.x = frame % 2 ? -2.2 : -1.8;
         }
+        // 有队友在旁边等我：手里的活不停，偶尔回头招手示意（每 ~4.4s 一次 0.7s 小动作）
+        if (this._watcher) {
+          this._watchT = (this._watchT || 0) + dt;
+          const cyc = this._watchT % 4.4;
+          if (cyc < 0.7) {
+            const s = Math.sin((cyc / 0.7) * Math.PI);
+            let ang = Math.atan2(this._watcher.x - pos.x, this._watcher.z - pos.z) - this.group.rotation.y;
+            while (ang > Math.PI) ang -= Math.PI * 2;
+            while (ang < -Math.PI) ang += Math.PI * 2;
+            this.body.rotation.y = ang * 0.55 * s;
+            this.armR.rotation.x = -2.2 + Math.sin(cyc * 12) * 0.3 * s;
+          }
+        }
         this.body.scale.set(1, 1 + Math.sin(t * 8) * 0.03, 1);
+        break;
+      }
+      case 'chat': { // 被队友找上：面对对方倾听——微前倾、周期点头、每 ~3s 抬手回应一下
+        pos.y = 0;
+        this._chatT = (this._chatT || 0) + dt;
+        const ct = this._chatT;
+        const nod = Math.max(0, Math.sin(ct * 2.6));
+        this.body.rotation.x = 0.04 + nod * 0.08;
+        this.body.scale.set(1, 1 + Math.sin(ct * 2.6) * 0.02, 1);
+        const cyc = ct % 3.1;
+        if (cyc > 2.0) {
+          const s = Math.sin(((cyc - 2.0) / 1.1) * Math.PI);
+          this.armR.rotation.x = -1.8 * s;
+          this.armR.rotation.z = 0.25 * s;
+        }
         break;
       }
       case 'think': {
@@ -500,6 +580,31 @@ export class ChefActor {
         pos.y = 0;
         break;
       }
+      case 'break': { // 完工间歇：原地呼吸 + 待机小动作，每隔几秒举杯喝水（1.4s）
+        pos.y = 0;
+        this.body.scale.set(1, 1 + Math.sin(t * 2.2) * 0.02, 1);
+        this._breakT += dt;
+        if (this._drinkT != null) {
+          this._drinkT += dt;
+          const u = Math.min(1, this._drinkT / 1.4);
+          const s = Math.sin(u * Math.PI);
+          this._takeCup().visible = true;
+          this.armR.rotation.x = -2.3 * s;   // 举杯到嘴边
+          this.armR.rotation.z = 0.12 * s;
+          this.body.rotation.x = -0.1 * s;   // 微仰头
+          if (this._drinkT >= 1.4) {
+            this._drinkT = null;
+            this._drinkAt = this._breakT + 4 + Math.random() * 4;
+            this._cup.visible = false;
+            this.resetPose();
+          }
+        } else if (this._breakT >= this._drinkAt) {
+          this._drinkT = 0;
+        } else {
+          this._updateIdle(dt); // 东张西望 / 擦汗 / 颠勺
+        }
+        break;
+      }
       default: { // rest 站立：呼吸 + 待机小动作（东张西望/擦汗/颠勺）
         pos.y = 0;
         this.body.scale.set(1, 1 + Math.sin(t * 2.2) * 0.02, 1);
@@ -524,7 +629,7 @@ export class ChefActor {
       this.eyeGroup.scale.y += (target - this.eyeGroup.scale.y) * Math.min(1, dt * 22);
     }
     // 眼神游移
-    const canGlance = this.state === 'rest' || this.state === 'think' || this.state === 'sleep';
+    const canGlance = this.state === 'rest' || this.state === 'think' || this.state === 'sleep' || this.state === 'break';
     if (canGlance) {
       this._glance.t -= dt;
       if (this._glance.t <= 0) {
