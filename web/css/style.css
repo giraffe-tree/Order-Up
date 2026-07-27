@@ -132,10 +132,61 @@ button { font-family: inherit; cursor: pointer; }
 .sw-cards {
   flex: 1 1 auto;
   display: flex;
+  align-items: center;
   gap: 10px;
   overflow-x: auto;
   padding: 4px 2px 6px;
   scrollbar-width: thin;
+}
+
+/* 项目组容器：同一项目（cwd）的多个会话厨房归为一组（深木纹底木牌） */
+.sw-group {
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 5px 6px 6px;
+  background: rgba(42, 33, 56, 0.28);
+  border: 3px solid #3A2415;
+  border-radius: 14px;
+  box-shadow: 0 3px 0 #3A2415;
+}
+/* 单会话项目组：透明容器 + 不渲染组标题，外观与扁平卡片一致，不臃肿 */
+.sw-group.solo {
+  padding: 0;
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+}
+/* 组内全部歇业：组标题一并置灰 */
+.sw-group.closed { filter: grayscale(0.6) brightness(0.9); opacity: 0.85; }
+
+.sw-group-head {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 0 4px;
+}
+.sw-group-icon { font-size: 11px; }
+.sw-group-name {
+  font-size: 11px;
+  font-weight: 900;
+  color: var(--paper);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 240px;
+}
+.sw-group-count {
+  font-size: 10px;
+  font-weight: 900;
+  color: var(--wood-light);
+  white-space: nowrap;
+}
+.sw-group-cards {
+  display: flex;
+  gap: 8px;
 }
 
 .sw-card {
@@ -201,8 +252,9 @@ button { font-family: inherit; cursor: pointer; }
   white-space: nowrap;
 }
 
-/* 未读事件红点 */
-.sw-card .badge {
+/* 未读事件红点（卡片级 / 项目组标题聚合级共用） */
+.sw-card .badge,
+.sw-group-head .badge {
   position: absolute;
   top: -9px; right: -7px;
   min-width: 22px; height: 22px;

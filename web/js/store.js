@@ -5,6 +5,13 @@
 
   var MAX_FEED = 30;
 
+  // cwd 目录名（浏览器无 node:path，手搓 basename；兼容 \ 与 / 分隔符）
+  function baseName(p) {
+    p = String(p || '').replace(/[/\\]+$/, '');
+    var i = Math.max(p.lastIndexOf('/'), p.lastIndexOf('\\'));
+    return i >= 0 ? p.slice(i + 1) : p;
+  }
+
   function createState() {
     return {
       kitchens: [],
@@ -30,6 +37,8 @@
       id: String(k.id),
       name: k.name || '未命名厨房',
       cwd: k.cwd || '',
+      // 项目名：后端透传的 Kitchen.project 优先，否则从 cwd 目录名推导（供项目分组）
+      project: k.project || baseName(k.cwd),
       servedCount: k.servedCount || 0,
       active: !!k.active,
       lastTs: k.lastTs || 0,
@@ -120,6 +129,7 @@
         } else {
           k.name = incoming.name;
           k.cwd = incoming.cwd;
+          k.project = incoming.project;
           k.servedCount = incoming.servedCount;
           k.active = incoming.active;
           k.lastTs = incoming.lastTs;
@@ -178,7 +188,7 @@
         var inc = normalizeKitchen(ev.kitchen || { id: 'unknown' });
         k = findKitchen(state, inc.id);
         if (!k) { state.kitchens.push(inc); k = inc; }
-        else { k.name = inc.name; k.cwd = inc.cwd; k.active = inc.active; }
+        else { k.name = inc.name; k.cwd = inc.cwd; k.project = inc.project; k.active = inc.active; }
         effects.push({ type: 'kitchen_updated', kitchenId: k.id });
         break;
       }

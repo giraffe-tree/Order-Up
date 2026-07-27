@@ -44,7 +44,7 @@ const PERF = qs.get('perf') === '1';     // 性能模式：20 厨师满场随机
 const REPORT = qs.get('report') === '1'; // perf 跑完后 fetch 上报给 devtool-server（无头实测用）
 
 // ---- 内联 mock：6 厨师 ----
-const kitchen = { id: 'k1', name: '测试厨房', cwd: '/tmp/demo', chefs: [], servedCount: 0, active: true, lastTs: Date.now() };
+const kitchen = { id: 'k1', name: qs.get('name') || '测试厨房', cwd: '/tmp/demo', chefs: [], servedCount: 0, active: true, lastTs: Date.now() };
 const chefs = [
   { id: 'c1', name: '阿橙', role: null, depth: 0, status: 'cooking', color: '#E0473C', lastAction: null },
   { id: 'c2', name: '小蓝', role: null, depth: 0, status: 'cooking', color: '#447EE0', lastAction: null },

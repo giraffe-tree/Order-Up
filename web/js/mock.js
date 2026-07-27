@@ -1,7 +1,8 @@
 /* ?mock=1 模式：内置模拟数据，与 plan.md SSE 契约同构。
-   3 间厨房、lastTs 错开（codex-overcooked > api-server > hugo-blog），
+   4 间厨房 / 3 个项目：mock-k1 与 mock-k4 同 cwd（同项目的两个会话，验证
+   「项目 → 会话」两级分组），lastTs 错开（codex-overcooked > 多端设计评审 > api-server > hugo-blog），
    事件按轮换模式发往各家，覆盖全部 action.kind + chef_added/chef_status/dish_served，
-   便于自测「切换条排序 / 跟随最新 / 未读红点 / 订单票」。 */
+   便于自测「切换条排序 / 项目分组 / 跟随最新 / 未读红点 / 订单票」。 */
 (function (global) {
   'use strict';
 
@@ -13,6 +14,7 @@
     { kind: 'search', label: '打电话订食材', detail: 'codex sessions jsonl 格式' },
     { kind: 'tool',   label: '高压锅',     detail: 'mcp__fs__read_file' },
     { kind: 'speak',  label: '喊话',       detail: '马上就好，准备出餐！' },
+    { kind: 'talk',   label: '给队友传话',  detail: '补丁我打好了一半，你接着炒' },
     { kind: 'serve',  label: '出餐',       detail: '增量解析完成' },
     { kind: 'burn',   label: '糊了',       detail: '命令退出码 1' },
     { kind: 'idle',   label: '休息',       detail: '' },
@@ -35,6 +37,13 @@
         ]
       },
       {
+        id: 'mock-k4', name: '多端设计评审', cwd: '/Users/dev/codex-overcooked',
+        servedCount: 1, active: true, lastTs: now - 30 * 1000,
+        chefs: [
+          { id: 'c-abo', name: '阿卜', role: null, depth: 0, status: 'idle', color: '#39AEC1', lastAction: null }
+        ]
+      },
+      {
         id: 'mock-k2', name: 'api-server', cwd: '/Users/dev/api-server',
         servedCount: 5, active: true, lastTs: now - 60 * 1000,
         chefs: [
@@ -53,10 +62,11 @@
     var chefsByKitchen = {
       'mock-k1': [['c-amin', '阿明'], ['c-xiaoguo', '小锅']],
       'mock-k2': [['c-laowang', '老王']],
-      'mock-k3': [['c-ahua', '阿花']]
+      'mock-k3': [['c-ahua', '阿花']],
+      'mock-k4': [['c-abo', '阿卜']]
     };
     /* 事件轮换模式：别家厨房持续来事件，测跟随跳转与红点累计 */
-    var PATTERN = ['mock-k1', 'mock-k2', 'mock-k1', 'mock-k3', 'mock-k2', 'mock-k1', 'mock-k3'];
+    var PATTERN = ['mock-k1', 'mock-k2', 'mock-k1', 'mock-k3', 'mock-k2', 'mock-k4', 'mock-k1', 'mock-k3'];
 
     var timers = [];
     function later(fn, ms) { timers.push(setTimeout(fn, ms)); }
@@ -72,9 +82,15 @@
       pIdx++;
       var pool = chefsByKitchen[kid];
       var pick = pool[Math.floor(Math.random() * pool.length)];
+      // talk（给队友传话）：带上同厨房另一位厨师的 target，厨师会走过去面对面交谈
+      var action = { kind: step.kind, label: step.label, detail: step.detail, ts: Date.now() };
+      if (step.kind === 'talk') {
+        var mates = pool.filter(function (x) { return x[0] !== pick[0]; });
+        action.target = mates.length ? mates[Math.floor(Math.random() * mates.length)][0] : null;
+      }
       handlers.onEvent({
         type: 'chef_action', kitchenId: kid, chefId: pick[0],
-        action: { kind: step.kind, label: step.label, detail: step.detail, ts: Date.now() }
+        action: action
       });
       if (step.kind === 'serve') {
         later(function () {
@@ -90,10 +106,11 @@
 
     // 5 秒后 hugo-blog 新厨师入职（join：从门口走进来）
     later(function () {
+      var k3 = kitchens.filter(function (x) { return x.id === 'mock-k3'; })[0];
       var chef = { id: 'c-xin', name: '小辣椒', role: '帮厨', depth: 1, status: 'cooking', color: '#C46A9E', lastAction: null };
-      kitchens[2].chefs.push(chef);
+      k3.chefs.push(chef);
       chefsByKitchen['mock-k3'].push(['c-xin', '小辣椒']);
-      handlers.onEvent({ type: 'chef_added', kitchen: JSON.parse(JSON.stringify(kitchens[2])), chef: chef });
+      handlers.onEvent({ type: 'chef_added', kitchen: JSON.parse(JSON.stringify(k3)), chef: chef });
       handlers.onEvent({
         type: 'chef_action', kitchenId: 'mock-k3', chefId: 'c-xin',
         action: { kind: 'join', label: '新厨师入职', detail: 'depth 1', ts: Date.now() }

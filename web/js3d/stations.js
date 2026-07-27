@@ -24,14 +24,16 @@ function box(w, h, d, m) {
 }
 
 // ---------- 布局表 ----------
-// kind: counter | board | wok | stove | phone | pressure | serve | crate | sink | plates
+// kind: counter | board | wok | stove | phone | pressure | serve | crate | sink | plates | menu
 // face: 厨师站位朝向 ('n'|'s'|'e'|'w')，approach 由 face 推出
 export const LAYOUT = [
   // 北墙一排 (z=0)
   { ix: 0, iz: 0, kind: 'counter' }, { ix: 1, iz: 0, kind: 'crate', icon: '🍅', face: 'n' },
   { ix: 2, iz: 0, kind: 'crate', icon: '🥬', face: 'n' }, { ix: 3, iz: 0, kind: 'plates' },
   { ix: 4, iz: 0, kind: 'counter' }, { ix: 5, iz: 0, kind: 'serve', icon: '🔔', face: 'n' },
-  { ix: 6, iz: 0, kind: 'serve', icon: '🔔', face: 'n' }, { ix: 7, iz: 0, kind: 'counter' },
+  { ix: 6, iz: 0, kind: 'serve', icon: '🔔', face: 'n' },
+  // 菜单角（ix=7 北墙，正好在 decor 菜单黑板下方）：想菜单的厨师来这里翻阅菜单
+  { ix: 7, iz: 0, kind: 'menu', icon: '💭', face: 'n' },
   { ix: 8, iz: 0, kind: 'sink' }, { ix: 9, iz: 0, kind: 'phone', icon: '📞', face: 'n' },
   { ix: 10, iz: 0, kind: 'counter' }, { ix: 11, iz: 0, kind: 'counter' },
   // 西墙一列 (x=0)
@@ -307,6 +309,50 @@ function buildStation(group, s) {
       spout.rotation.x = Math.PI / 2;
       spout.position.set(x, topY + 0.3, z - 0.12);
       sub.add(basin, waterM, pipe, spout);
+      break;
+    }
+    case 'menu': { // 菜单角：立式菜单展示架 + 翻开的大菜单（右页可翻动）+ 一摞菜谱书
+      // 展示架：加高斜面板（顶边远离厨师，板面迎向站位与镜头，翻开的书能露出厨师帽檐上方）
+      // + 底部挡条 + 背后斜撑
+      const back = box(0.6, 0.72, 0.05, mat('crateWood', PAL.crateWood));
+      back.position.set(x, topY + 0.44, z - 0.16);
+      back.rotation.x = -0.42;
+      const ledge = box(0.6, 0.05, 0.09, mat('frameWood', PAL.frameWood));
+      ledge.position.set(x, topY + 0.13, z + 0.02);
+      const strut = box(0.07, 0.52, 0.05, mat('frameWood', PAL.frameWood));
+      strut.position.set(x, topY + 0.26, z - 0.38);
+      strut.rotation.x = 0.55;
+      sub.add(back, ledge, strut);
+      // 翻开的大菜单：红封面垫底 + 左右米白书页 + 书脊处铰链的可翻页
+      const book = new THREE.Group();
+      book.position.set(x, topY + 0.46, z - 0.12);
+      book.rotation.x = -0.42;
+      const cover = box(0.56, 0.02, 0.44, mat('red', PAL.red));
+      cover.position.y = -0.012;
+      const pageL = box(0.25, 0.015, 0.4, mat('paper', PAL.paper));
+      pageL.position.set(-0.135, 0.01, 0);
+      const pageR = pageL.clone();
+      pageR.position.x = 0.135;
+      // 可翻页：铰链挂在书脊（x=0），厨师翻阅时绕 z 轴掀起/落下（由 chef.js 驱动）
+      const hinge = new THREE.Group();
+      hinge.position.set(0, 0.022, 0);
+      const flip = box(0.25, 0.012, 0.4, mat('ticketPaper', PAL.ticketPaper));
+      flip.position.x = 0.135;
+      hinge.add(flip);
+      // 红色丝带书签垂在封面下沿
+      const ribbon = box(0.04, 0.012, 0.16, mat('red', PAL.red));
+      ribbon.position.set(0.05, 0.005, 0.27);
+      book.add(cover, pageL, pageR, hinge, ribbon);
+      sub.add(book);
+      // 旁边一摞菜谱书（三色书脊叠放）
+      const bookCols = [PAL.spiceGreen, PAL.spiceYolk, PAL.red];
+      bookCols.forEach((col, i) => {
+        const bk = box(0.2, 0.045, 0.28, mat('menuBook' + i, col, { roughness: 0.8 }));
+        bk.position.set(x + 0.33, topY + 0.025 + i * 0.05, z + 0.08);
+        bk.rotation.y = (i - 1) * 0.16;
+        sub.add(bk);
+      });
+      spot.menuHinge = hinge;
       break;
     }
     case 'counter': { // 空白台面：按格子坐标确定性摆放生活道具（低模程序化）

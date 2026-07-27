@@ -6,6 +6,7 @@ import fsp from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import { startServer } from '../server/index.js';
+import { CHEF_NAMES, chefNameIndex } from '../server/chef-names.js';
 
 let passed = 0;
 let failed = 0;
@@ -153,6 +154,8 @@ async function main() {
     const { sessionsDir, parent } = await makeFixture(root);
 
     console.log('▶ 用例 1：真实模式启动 + 回放快照');
+    ok(CHEF_NAMES.length === 128 && new Set(CHEF_NAMES).size === 128,
+      `128 人厨师池预定义且全部去重（实际 ${CHEF_NAMES.length} 名 / ${new Set(CHEF_NAMES).size} 唯一）`);
     const h1 = await startServer({ port: 0, demo: false, sessionsDir });
     handles.push(h1);
     const port1 = h1.server.address().port;
@@ -175,15 +178,26 @@ async function main() {
       ok(typeof k.id === 'string' && typeof k.name === 'string' && Array.isArray(k.chefs)
         && typeof k.servedCount === 'number' && typeof k.active === 'boolean' && typeof k.lastTs === 'number',
         'Kitchen 结构符合契约（id/name/chefs/servedCount/active/lastTs）');
+      ok(k.cwd === '/tmp/proj/alpha-kitchen' && k.project === 'alpha-kitchen'
+        && k2.cwd === '/tmp/other/alpha-kitchen' && k2.project === 'alpha-kitchen',
+        `Kitchen 透传 cwd 与项目名（cwd 目录名，供前端项目分组；实际 ${k.project} / ${k2.project}）`);
       ok(k.chefs.some((c) => c.id === 'child-1') && k2.chefs.some((c) => c.id === 'child-2'),
         '父子线程归并为同一间厨房（t:根线程）');
       ok(k.name.startsWith('alpha-kitchen #') && k2.name.startsWith('alpha-kitchen #') && k.name !== k2.name,
         `重名厨房自动追加 #短id 消歧（实际 ${k.name} / ${k2.name}）`);
       const sub = k.chefs.find((c) => c.id === 'child-1');
-      ok(sub && sub.depth === 1 && sub.name === '小炒', '子 agent 厨师层级与昵称正确');
+      ok(sub && sub.depth === 1 && CHEF_NAMES.includes(sub.name),
+        `子 agent 厨师层级正确、名字来自 128 人厨师池（实际 ${sub?.name}）`);
+      // 确定性 hash：child-1 的基准位无撞名，应恰好命中 chefNameIndex('child-1')
+      ok(sub && sub.name === CHEF_NAMES[chefNameIndex('child-1')],
+        `厨师名由 hash(threadId) 确定性映射（${sub?.name} === ${CHEF_NAMES[chefNameIndex('child-1')]}）`);
+      const rootChef = k.chefs.find((c) => c.id === 'parent-1');
+      ok(rootChef && CHEF_NAMES.includes(rootChef.name)
+        && rootChef.name !== k.name && !k.name.startsWith(rootChef.name),
+        `主厨名来自厨师池而非任务标题/厨房名（实际 ${rootChef?.name}，厨房 ${k.name}）`);
       const bare = k2.chefs.find((c) => c.id === 'child-2');
-      ok(bare && bare.name !== 'alpha-kitchen' && !bare.name.startsWith('alpha-kitchen'),
-        `裸子 agent（无昵称/工种）不叫目录名（实际 ${bare?.name}）`);
+      ok(bare && CHEF_NAMES.includes(bare.name) && !bare.name.startsWith('alpha-kitchen'),
+        `裸子 agent（无昵称/工种）也叫厨师池名字而非目录名（实际 ${bare?.name}）`);
       const names1 = k.chefs.map((c) => c.name);
       const names2 = k2.chefs.map((c) => c.name);
       ok(new Set(names1).size === names1.length && new Set(names2).size === names2.length,
@@ -235,6 +249,9 @@ async function main() {
     ok(renamed !== null, 'session_index 写入后厨房改名为会话标题');
     ok(renamed && renamed.k2.name === 'alpha-kitchen',
       `重名组仅剩一间后自动摘掉 #短id 后缀（实际 ${renamed?.k2.name}）`);
+    // 厨房改用会话标题后，厨师名保持 hash 分配的池名，绝不跟随标题变化
+    ok(renamed && renamed.k1.chefs.every((c) => CHEF_NAMES.includes(c.name) && c.name !== '快照接口开发'),
+      '厨房改名后厨师名不跟随会话标题（仍是厨师池名字）');
     // 兜底菜名此时应取线程标题
     await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '' }, 47) + '\n');
     const dish3 = await sse.waitFor((e) => e.type === 'dish_served' && e.dish.ts > dish2.dish.ts, 9000, 'dish_served(空消息兜底)').catch(() => null);
@@ -247,6 +264,8 @@ async function main() {
     const port2 = h2.server.address().port;
     const dSnap = JSON.parse((await get(port2, '/api/snapshot')).body);
     ok(dSnap.kitchens.length === 3 && dSnap.kitchens.every((k) => k.chefs.length >= 1), 'demo 快照含 3 间厨房与厨师');
+    ok(dSnap.kitchens.every((k) => k.chefs.every((c) => CHEF_NAMES.includes(c.name))),
+      'demo 厨师名同样来自 128 人厨师池（与真实数据同一命名规则）');
     const sse2 = connectSSE(port2);
     const dEv = await sse2.waitFor((e) => e.type === 'chef_action', 9000, 'demo chef_action').catch(() => null);
     ok(dEv !== null, 'demo 模式 SSE 持续产出事件');

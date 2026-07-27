@@ -43,7 +43,12 @@ const POOL = {
     ['喊话', '锅快糊了，我去盯一下灶台！'],
     ['喊话', '这道菜还差最后一把火'],
     ['顾客点单', '把出餐口往右挪两格'],
+  ],
+  talk: [
     ['给队友传话', '补丁我打好了一半，你接着炒'],
+    ['给队友派活', '顺手把自测也跑一遍'],
+    ['给队友传话', '菜谱我改好了，你尝尝咸淡'],
+    ['叫停队友', '那条路走不通，先停一下'],
   ],
   serve: [
     ['出餐', '完成快照接口'],
@@ -66,21 +71,23 @@ const KITCHENS = [
   { id: 'demo-k3', name: 'blog-engine', cwd: '/Users/demo/project/blog-engine' },
 ];
 
+// 厨师名不再显式指定：与真实数据同一条路——upsertChef 按 hash(id) 从 128 人
+// 厨师池分配（demo id 固定，所以每次 --demo 看到的都是同一批名字，风格统一）
 const CHEFS = [
-  { k: 0, id: 'demo-c1', name: '阿汤', role: null, depth: 0 },
-  { k: 0, id: 'demo-c2', name: '小炒', role: 'explorer', depth: 1 },
-  { k: 1, id: 'demo-c3', name: '老白', role: null, depth: 0 },
-  { k: 1, id: 'demo-c4', name: '阿糖', role: 'worker', depth: 1 },
-  { k: 2, id: 'demo-c5', name: 'Russell', role: null, depth: 0 },
-  { k: 2, id: 'demo-c6', name: '椒椒', role: 'reviewer', depth: 1 },
+  { k: 0, id: 'demo-c1', role: null, depth: 0 },
+  { k: 0, id: 'demo-c2', role: 'explorer', depth: 1 },
+  { k: 1, id: 'demo-c3', role: null, depth: 0 },
+  { k: 1, id: 'demo-c4', role: 'worker', depth: 1 },
+  { k: 2, id: 'demo-c5', role: null, depth: 0 },
+  { k: 2, id: 'demo-c6', role: 'reviewer', depth: 1 },
 ];
 
 const NEW_HIRES = [
-  { name: '团团', role: 'worker' },
-  { name: '果果', role: 'explorer' },
+  { role: 'worker' },
+  { role: 'explorer' },
 ];
 
-const KINDS = ['read', 'edit', 'exec', 'search', 'tool', 'think', 'speak'];
+const KINDS = ['read', 'edit', 'exec', 'search', 'tool', 'think', 'speak', 'talk'];
 const MAX_CHEFS = 8;
 
 export function startDemo(store) {
@@ -88,8 +95,8 @@ export function startDemo(store) {
   const chefs = [];
   for (const c of CHEFS) {
     const kid = KITCHENS[c.k].id;
-    const { chef } = store.upsertChef(kid, { id: c.id, name: c.name, role: c.role, depth: c.depth }, { live: true });
-    if (chef) chefs.push({ kid, id: c.id, name: c.name });
+    const { chef } = store.upsertChef(kid, { id: c.id, role: c.role, depth: c.depth }, { live: true });
+    if (chef) chefs.push({ kid, id: c.id });
   }
   for (const k of KITCHENS) {
     const kk = store.kitchens.get(k.id);
@@ -112,8 +119,8 @@ export function startDemo(store) {
       // 新厨师入职（join）
       const h = NEW_HIRES[hires++];
       const id = 'demo-h' + hires;
-      const { chef } = store.upsertChef(c.kid, { id, name: h.name, role: h.role, depth: 1 }, { live: true });
-      if (chef) chefs.push({ kid: c.kid, id, name: h.name });
+      const { chef } = store.upsertChef(c.kid, { id, role: h.role, depth: 1 }, { live: true });
+      if (chef) chefs.push({ kid: c.kid, id });
     } else if (r < 0.09 || sinceServe >= 18) {
       // 出餐（serve + dish_served）
       sinceServe = 0;
@@ -126,7 +133,13 @@ export function startDemo(store) {
     } else {
       const kind = pick(KINDS);
       const [label, detail] = pick(POOL[kind]);
-      store.action(c.kid, c.id, kind, label, detail, Date.now());
+      // 协作动作（talk / 等队友）带上队友 target：厨师会走到对方身边交谈
+      let target;
+      if (kind === 'talk' || (kind === 'think' && label === '等队友')) {
+        const mates = chefs.filter((x) => x.kid === c.kid && x.id !== c.id);
+        target = mates.length ? pick(mates).id : null;
+      }
+      store.action(c.kid, c.id, kind, label, detail, Date.now(), target);
     }
     // 随机间隔 0.3 ~ 2s
     setTimeout(tick, 300 + Math.random() * 1700);

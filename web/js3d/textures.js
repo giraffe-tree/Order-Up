@@ -12,7 +12,7 @@ function makeCanvas(w, h) {
 function toTexture(canvas) {
   const t = new THREE.CanvasTexture(canvas);
   t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 4;
+  t.anisotropy = 8; // 斜视角下文字/纹理更清晰
   return t;
 }
 
@@ -88,42 +88,70 @@ export function bubbleTexture(text) {
   return toTexture(c);
 }
 
-// 自适应字号：文字超过 maxChars 后按比例缩字号，最长 maxLen 字（超出截断）
-function fitFont(g, text, fontSize, maxChars, maxLen) {
-  const label = text.length > maxLen ? text.slice(0, maxLen) : text;
-  const size = label.length > maxChars ? Math.max(16, Math.floor(fontSize * maxChars / label.length)) : fontSize;
+// 自适应文字：按实际测量宽度缩字号（而非按字数估算，中文/emoji 宽度差异大），
+// 超出 maxLen 个字符时截断并加省略号（Array.from 避免切断 emoji 代理对）
+function fitFont(g, text, fontSize, maxChars, maxLen, maxWidth) {
+  let chars = Array.from(text);
+  let truncated = false;
+  if (chars.length > maxLen) { chars = chars.slice(0, Math.max(1, maxLen - 1)); truncated = true; }
+  let label = chars.join('') + (truncated ? '…' : '');
+  let size = fontSize;
   g.font = `bold ${size}px ${FONT}`;
+  while (size > 18 && g.measureText(label).width > maxWidth) {
+    size -= 2;
+    g.font = `bold ${size}px ${FONT}`;
+  }
+  // 缩到最小字号仍放不下：才逐字截断到能容纳省略号为止
+  if (g.measureText(label).width > maxWidth) {
+    while (chars.length > 1 && g.measureText(chars.join('') + '…').width > maxWidth) chars.pop();
+    label = chars.join('') + '…';
+  }
   return label;
 }
 
 // 把木牌画进既有 2D 上下文（对象池复用：同一 canvas 反复重绘，不再每次新建纹理）
-// maxChars/maxLen 默认不限（保持旧标牌行为）；popup 池传入明确上限实现缩字号与截断
+// maxChars 保留兼容（不再使用）；maxLen 限制字符数；文字按测量宽度自动缩字号、居中且不贴边
 export function drawPlank(g, w, h, text, { fontSize = 44, bg = '#7A5230', fg = '#F5EBD7', maxChars = Infinity, maxLen = Infinity } = {}) {
   g.clearRect(0, 0, w, h);
   g.fillStyle = bg;
   g.fillRect(0, 0, w, h);
-  // 木纹深色边框
+  // 木纹深色边框 + 内侧一道奶油色高光，营造卡通「雕刻招牌」感
   g.strokeStyle = '#2A2138';
   g.lineWidth = 8;
   g.strokeRect(4, 4, w - 8, h - 8);
+  g.strokeStyle = 'rgba(245,235,215,0.16)';
+  g.lineWidth = 3;
+  g.strokeRect(11, 11, w - 22, h - 22);
   g.strokeStyle = 'rgba(0,0,0,0.18)';
   g.lineWidth = 3;
-  g.beginPath(); g.moveTo(10, h * 0.35); g.lineTo(w - 10, h * 0.35); g.stroke();
-  g.beginPath(); g.moveTo(10, h * 0.7); g.lineTo(w - 10, h * 0.7); g.stroke();
+  g.beginPath(); g.moveTo(14, h * 0.35); g.lineTo(w - 14, h * 0.35); g.stroke();
+  g.beginPath(); g.moveTo(14, h * 0.7); g.lineTo(w - 14, h * 0.7); g.stroke();
   g.textAlign = 'center';
   g.textBaseline = 'middle';
-  const label = fitFont(g, text, fontSize, maxChars, maxLen);
-  g.lineWidth = 6;
+  g.lineJoin = 'round'; // 中文笔画转角圆润，描边不出尖刺
+  const padX = Math.max(18, w * 0.08);
+  const label = fitFont(g, text, fontSize, maxChars, maxLen, w - padX * 2);
+  const tx = w / 2, ty = h / 2 + 2;
+  const outline = Math.max(4, Math.round(fontSize * 0.13));
+  // 柔和投影（错位深影），让奶油字从深色牌面上「浮」出来
+  g.lineWidth = outline;
+  g.strokeStyle = 'rgba(26,18,34,0.9)';
+  g.strokeText(label, tx, ty + 2);
+  g.fillStyle = 'rgba(26,18,34,0.55)';
+  g.fillText(label, tx, ty + 3);
+  // 主文字：深色描边 + 奶油填充
+  g.lineWidth = outline;
   g.strokeStyle = '#2A2138';
-  g.strokeText(label, w / 2, h / 2 + 2);
+  g.strokeText(label, tx, ty);
   g.fillStyle = fg;
-  g.fillText(label, w / 2, h / 2 + 2);
+  g.fillText(label, tx, ty);
 }
 
-// 木牌（歇业中 / 后厨+N / 厨房名）
-export function plankTexture(text, { w = 320, h = 96, fontSize = 44, bg = '#7A5230', fg = '#F5EBD7' } = {}) {
-  const [c, g] = makeCanvas(w, h);
-  drawPlank(g, w, h, text, { fontSize, bg, fg });
+// 木牌（歇业中 / 后厨+N / 厨房名）：内部 2x 超采样绘制，下采样后文字更锐利
+export function plankTexture(text, { w = 320, h = 96, fontSize = 44, bg = '#7A5230', fg = '#F5EBD7', maxLen = Infinity, ss = 2 } = {}) {
+  const [c, g] = makeCanvas(w * ss, h * ss);
+  g.scale(ss, ss);
+  drawPlank(g, w, h, text, { fontSize, bg, fg, maxLen });
   return toTexture(c);
 }
 

@@ -14,11 +14,11 @@ if (wantSelftest) {
 
 const KIND_ICON = {
   read: '📖', edit: '🔪', exec: '🔥', search: '📞', tool: '⚡',
-  think: '💭', speak: '🔔', serve: '✅', burn: '💥', join: '👨‍🍳', idle: '💤'
+  think: '💭', speak: '🔔', talk: '💬', serve: '✅', burn: '💥', join: '👨‍🍳', idle: '💤'
 };
 const KIND_COLOR = {
   read: '#B89B78', edit: '#D94F3D', exec: '#F57B4A', search: '#39AEC1',
-  tool: '#928688', think: '#D2A06B', speak: '#F2C230', serve: '#58B24C',
+  tool: '#928688', think: '#D2A06B', speak: '#F2C230', talk: '#E8923C', serve: '#58B24C',
   burn: '#D94F3D', join: '#447EE0', idle: '#928688'
 };
 
@@ -155,7 +155,7 @@ let feedKind = 'all';
 const KIND_GROUPS = {
   serve: ['serve'],
   burn: ['burn'],
-  speak: ['speak'],
+  speak: ['speak', 'talk'],
   tools: ['read', 'edit', 'exec', 'search', 'tool', 'think', 'join']
 };
 document.querySelectorAll('#feed-kinds button').forEach((btn) => {
@@ -310,12 +310,19 @@ const handlers = {
           playSound('join');
           break;
         case 'chef_action':
-          renderer.chefAction(ef.chef.id, ef.action);
+          // 传完整 chef：已下班退场（从场景移除）的厨师来新事件时可重新从门口入职
+          renderer.chefAction(ef.chef.id, ef.action, ef.chef);
           if (SOUND_KIND[ef.action && ef.action.kind]) playSound(SOUND_KIND[ef.action.kind]);
           break;
         case 'chef_status':
           renderer.chefStatus(ef.chefId, ef.status);
           break;
+        case 'kitchen_updated': {
+          // 厨房改名/状态更新：重绘墙上名牌（不重建场景）
+          const cur = ui.currentKitchen();
+          if (cur && renderer.setKitchenName) renderer.setKitchenName(cur.name);
+          break;
+        }
         case 'dish_served':
           renderer.dishServed(ef.dish);
           playSound('serve');

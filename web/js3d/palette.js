@@ -55,3 +55,18 @@ export const PAL = {
 
 // 官方四色（chef.color 缺失时兜底轮换）
 export const CHEF_COLORS = ['#447EE0', '#E0473C', '#58B24C', '#F2C230'];
+
+// —— 厨师形象差异化（按 chef.id 哈希稳定取用，同一厨师每次入职形象一致）——
+// 制服色板：取自 mock/测试里沿用已久的协调色，饱和度适中，与暖色厨房不冲突
+export const CHEF_OUTFITS = [
+  '#D95F4B', // 陶红
+  '#447EE0', // 靛蓝
+  '#58B24C', // 草绿
+  '#E8B23A', // 姜黄（= spiceYolk）
+  '#8E6BB8', // 堇紫
+  '#16A2A2', // 青碧
+  '#E67E22', // 橘橙
+  '#C46A9E', // 藕粉
+];
+// 肤色变体：暖调由浅到深
+export const CHEF_SKINS = [0xF2C9A0, 0xEAB98C, 0xD89E6E, 0xF7DDBB];

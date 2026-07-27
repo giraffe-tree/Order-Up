@@ -29,11 +29,11 @@
 | `web_search` | 打电话订食材 📞 | 电话台 |
 | MCP / 自定义工具调用 | 高压锅 ⚡ | 特殊厨具 |
 | `imagegen` / 生成图片 | 画招牌 🎨 | 特殊厨具 |
-| `agent_reasoning` / `update_plan` / 目标管理 | 想菜单 💭 | 原地思考 |
+| `agent_reasoning` / `update_plan` / 目标管理 | 想菜单 💭 | 菜单角（翻阅菜单） |
 | `context_compacted` 上下文压缩 | 收拾台面 🧹 | 原地 |
 | `thread_rolled_back` 会话回滚 | 复盘 🔙 | 原地 |
 | `agent_message` / `user_message` | 喊话 / 顾客点单 🔔 | 出餐口 |
-| 协作工具（`send_message` / `wait_agent` / `followup_task` 等） | 给队友传话 / 等队友 💬 | 原地 |
+| 协作工具（`send_message` / `wait_agent` / `followup_task` 等） | 给队友传话 / 给队友派活 / 叫停队友 / 等队友 💬 | 走到目标队友厨师身旁，面对面交谈/等待 |
 | `task_complete` | 出餐 ✅（计数 +1，弹 toast + 音效） | 出餐口 |
 | `turn_aborted` / 子 agent 被叫停（`interrupted`） | 糊了 💥（烟雾特效） | 原地 |
 | `spawn_agent` / 子 agent 开工 / 新会话 | 派出小厨师 / 新厨师入职 👨‍🍳 | 从门口走进来 |

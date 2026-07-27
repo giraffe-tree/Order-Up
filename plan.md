@@ -57,15 +57,17 @@ codex-overcooked-by-kimi/
 { "type": "snapshot",      "kitchens": [Kitchen] }
 { "type": "chef_added",    "kitchen": Kitchen, "chef": Chef }
 { "type": "chef_action",   "kitchenId": "k1", "chefId": "c1",
-  "action": { "kind": "read|edit|exec|search|tool|think|speak|serve|burn|join|idle",
-              "label": "短中文标签", "detail": "文件名或命令(截断80字)", "ts": 1721850000000 } }
+  "action": { "kind": "read|edit|exec|search|tool|think|speak|talk|serve|burn|join|idle",
+              "label": "短中文标签", "detail": "文件名或命令(截断80字)", "ts": 1721850000000,
+              "target": "队友 chefId（仅 talk 与等队友的 think 携带；未解析到为 null，可缺省）" } }
 { "type": "chef_status",   "kitchenId": "k1", "chefId": "c1", "status": "cooking|idle|done" }
 { "type": "dish_served",   "kitchenId": "k1", "dish": { "name": "...", "by": "chefName", "ts": 0 } }
 ```
 ```ts
-Kitchen = { id: string, name: string /* cwd basename */, cwd: string, chefs: Chef[],
+Kitchen = { id: string, name: string /* cwd basename */, cwd: string,
+            project: string /* cwd 目录名（项目名），前端「项目 → 会话」分组用 */, chefs: Chef[],
             servedCount: number, active: boolean, lastTs: number }
-Chef    = { id: string, name: string /* agent_nickname 或短id */, role: string|null,
+Chef    = { id: string, name: string /* 128 人厨师池，hash(threadId) 稳定分配、厨房内撞名顺延 */, role: string|null,
             depth: number, status: "cooking"|"idle"|"done", color: string /* hex，后端分配 */,
             lastAction: Action|null }
 ```
@@ -108,7 +110,7 @@ r.chefStatus(chefId, status);   // cooking|idle|done
 r.dishServed(dish);             // 出餐口飞菜+「+1」
 r.resize();  r.dispose();
 ```
-action.kind → 工位映射不变：read→案板 edit→炒锅 exec→灶台 search→电话台 tool→高压锅 speak/serve→出餐口 think→原地 burn→冒烟。
+action.kind → 工位映射不变：read→案板 edit→炒锅 exec→灶台 search→电话台 tool→高压锅 speak/serve→出餐口 think→原地 burn→冒烟；talk（及等队友的 think）→ 走到目标队友厨师身旁面对面交谈/等待。
 UI 壳对 js3d 的引用必须带降级：动态 import 失败时回退到自己的 stub，保证两个 worker 可独立开发。
 
 ## 分工（文件所有权互不重叠）

@@ -2,12 +2,43 @@
 // 个性系统：待机小动作（东张西望/擦汗/颠勺）、走路手臂摆动、程序化眼睛（眼神/眨眼/眯眼）
 // 名牌使用 THREE.Sprite —— 天然始终面向镜头
 import * as THREE from '../vendor/three.module.min.js';
-import { PAL } from './palette.js';
+import { PAL, CHEF_OUTFITS, CHEF_SKINS } from './palette.js';
 import { nameTexture, drawBubble, makeSprite } from './textures.js';
 
 // ---------- 共享几何体 ----------
 const G = {};
 function geo(key, make) { return G[key] || (G[key] = make()); }
+
+// ---------- 共享材质（跨厨师复用：颜色相同即同一份；由 disposeShared 统一释放） ----------
+const M = {};
+function mat(key, make) {
+  if (!M[key]) { M[key] = make(); M[key].userData.shared = true; }
+  return M[key];
+}
+
+// ---------- 确定性形象派生 ----------
+// 以 chef.id（= threadId，稳定标识）哈希为种子：同一厨师休息退场后重新入职形象一致。
+// 各维度用不同盐值哈希，互不相关；与 server/parser.js 的 hashStr 同一算法。
+function hashStr(s) {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+// look: { head, outfit, hat, skin, heightK, widthK }
+//   hat: 0 大厨帽 | 1 头巾 | 2 丸子头 | 3 工作帽（主厨固定 0 且加高一档）
+function deriveLook(chef) {
+  const id = String(chef.id ?? chef.name ?? 'chef');
+  const head = chef.depth === 0;
+  return {
+    head,
+    outfit: CHEF_OUTFITS[hashStr(id) % CHEF_OUTFITS.length],
+    hat: head ? 0 : hashStr(id + '|hat') % 4,
+    skin: CHEF_SKINS[hashStr(id + '|skin') % CHEF_SKINS.length],
+    heightK: 0.94 + (hashStr(id + '|h') % 5) * 0.03, // 0.94–1.06
+    widthK: 0.92 + (hashStr(id + '|w') % 5) * 0.05,  // 0.92–1.12
+  };
+}
 
 const WORK_KINDS = new Set(['read', 'edit', 'exec', 'search', 'tool', 'speak', 'serve']);
 
@@ -33,47 +64,71 @@ export class ChefActor {
     this._glance = { t: 1.5 + Math.random() * 3, active: false, yaw: 0 };
     this._blinkT = 1.5 + Math.random() * 3.5;
     this._idle = { t: 3 + Math.random() * 7, kind: null, phase: 0 };
+    this.look = deriveLook(chef); // 确定性形象（先于 _build）
     this._build();
   }
 
   _build() {
     const c = this.color;
-    const bodyMat = new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9 });
-    const apronMat = new THREE.MeshStandardMaterial({
-      color: c.clone().lerp(new THREE.Color(0xFFFFFF), 0.35), flatShading: true, roughness: 0.9,
-    });
-    const whiteMat = new THREE.MeshStandardMaterial({ color: PAL.hat, flatShading: true, roughness: 0.95 });
-    const shadeMat = new THREE.MeshStandardMaterial({ color: PAL.hatShade, flatShading: true, roughness: 0.95 });
-    const skinMat = new THREE.MeshStandardMaterial({ color: PAL.skin, flatShading: true, roughness: 0.9 });
+    const look = this.look;
+    // 身份色（chef.color）：脚下圆环 / 名牌 / 围巾 / 帽带沿用，保持与 UI 票卡同色
+    const idHex = '#' + c.getHexString();
+    const scarfHex = look.head ? '#D94F3D' : idHex; // 主厨红领巾，其他用身份色
+    const bandHex = look.head ? '#E8B23A' : idHex;  // 主厨金帽带，其他用身份色
+    const bodyMat = mat('body:' + look.outfit, () => new THREE.MeshStandardMaterial({
+      color: look.outfit, flatShading: true, roughness: 0.9,
+    }));
+    const apronMat = mat('apron:' + look.outfit, () => new THREE.MeshStandardMaterial({
+      color: new THREE.Color(look.outfit).lerp(new THREE.Color(0xFFFFFF), 0.35), flatShading: true, roughness: 0.9,
+    }));
+    const whiteMat = mat('hatWhite', () => new THREE.MeshStandardMaterial({ color: PAL.hat, flatShading: true, roughness: 0.95 }));
+    const shadeMat = mat('hatShade', () => new THREE.MeshStandardMaterial({ color: PAL.hatShade, flatShading: true, roughness: 0.95 }));
+    const skinMat = mat('skin:' + look.skin, () => new THREE.MeshStandardMaterial({ color: look.skin, flatShading: true, roughness: 0.9 }));
+    const scarfMat = mat('scarf:' + scarfHex, () => new THREE.MeshStandardMaterial({ color: scarfHex, flatShading: true, roughness: 0.9 }));
+    const bandMat = mat('band:' + bandHex, () => new THREE.MeshStandardMaterial({ color: bandHex, flatShading: true, roughness: 0.9 }));
+    const hairMat = mat('hair', () => new THREE.MeshStandardMaterial({ color: 0x5B4632, flatShading: true, roughness: 0.95 }));
 
     // 脚下圆环（chef.color）
     const ring = new THREE.Mesh(
       geo('ring', () => new THREE.RingGeometry(0.42, 0.52, 24)),
-      new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85, side: THREE.DoubleSide }),
+      mat('ring:' + idHex, () => new THREE.MeshBasicMaterial({ color: c, transparent: true, opacity: 0.85, side: THREE.DoubleSide })),
     );
     ring.rotation.x = -Math.PI / 2;
     ring.position.y = 0.02;
     this.group.add(ring);
 
-    // 身体圆柱（chef.color）
     this.body = new THREE.Group();
     this.group.add(this.body);
+    // 体型差异集中在 figure 内层：动画每帧重写 body.scale（挤压拉伸/呼吸），
+    // figure 的胖瘦/高矮缩放恒定不被覆盖，且与动画缩放自然叠加
+    this.figure = new THREE.Group();
+    this.figure.scale.set(look.widthK, look.heightK, look.widthK);
+    this.body.add(this.figure);
+    const F = this.figure;
+
+    // 身体圆柱（制服色，按 id 哈希取自 CHEF_OUTFITS）
     const torso = new THREE.Mesh(geo('torso', () => new THREE.CylinderGeometry(0.26, 0.3, 0.55, 14)), bodyMat);
     torso.position.y = 0.36;
     torso.castShadow = true;
-    this.body.add(torso);
-    // 围裙（chef.color 提亮）
+    F.add(torso);
+    // 围裙（制服色提亮）
     const apron = new THREE.Mesh(geo('apron', () => new THREE.BoxGeometry(0.3, 0.35, 0.04)), apronMat);
     apron.position.set(0, 0.34, 0.26);
-    this.body.add(apron);
-    // 脸
+    F.add(apron);
+    // 围巾（颈巾 + 侧结）：主厨红 / 其他身份色，一眼认出是谁
+    const scarf = new THREE.Mesh(geo('scarf', () => new THREE.CylinderGeometry(0.2, 0.24, 0.07, 12)), scarfMat);
+    scarf.position.y = 0.6;
+    const knot = new THREE.Mesh(geo('scarfKnot', () => new THREE.SphereGeometry(0.055, 6, 5)), scarfMat);
+    knot.position.set(0.11, 0.57, 0.22);
+    F.add(scarf, knot);
+    // 脸（肤色变体）
     const face = new THREE.Mesh(geo('face', () => new THREE.SphereGeometry(0.17, 12, 10)), skinMat);
     face.position.set(0, 0.72, 0.1);
     face.castShadow = true;
-    this.body.add(face);
+    F.add(face);
     // 眼睛组：整体可左右转动（眼神朝向）、scale.y 压缩做眨眼/眯眼
-    const eyeMat = new THREE.MeshBasicMaterial({ color: 0x2A2138 });
-    const hlMat = new THREE.MeshBasicMaterial({ color: 0xFFFDF6 });
+    const eyeMat = mat('eye', () => new THREE.MeshBasicMaterial({ color: 0x2A2138 }));
+    const hlMat = mat('eyeHL', () => new THREE.MeshBasicMaterial({ color: 0xFFFDF6 }));
     this.eyeGroup = new THREE.Group();
     this.eyeGroup.position.set(0, 0.75, 0.22);
     for (const dx of [-0.06, 0.06]) {
@@ -84,47 +139,81 @@ export class ChefActor {
       hl.position.set(dx + 0.012, 0.012, 0.048);
       this.eyeGroup.add(eye, hl);
     }
-    this.body.add(this.eyeGroup);
+    F.add(this.eyeGroup);
     // 手臂 + 白手套
+    const gloveMat = mat('glove', () => new THREE.MeshStandardMaterial({ color: PAL.glove, flatShading: true, roughness: 0.9 }));
     this.armL = new THREE.Group(); this.armR = new THREE.Group();
     this.armL.position.set(-0.3, 0.52, 0); this.armR.position.set(0.3, 0.52, 0);
     for (const [arm, sx] of [[this.armL, -1], [this.armR, 1]]) {
       const limb = new THREE.Mesh(geo('limb', () => new THREE.CylinderGeometry(0.05, 0.05, 0.22, 8)), bodyMat);
       limb.position.y = -0.1;
-      const hand = new THREE.Mesh(geo('hand', () => new THREE.SphereGeometry(0.09, 8, 6)),
-        new THREE.MeshStandardMaterial({ color: PAL.glove, flatShading: true, roughness: 0.9 }));
+      const hand = new THREE.Mesh(geo('hand', () => new THREE.SphereGeometry(0.09, 8, 6)), gloveMat);
       hand.position.y = -0.24;
       hand.castShadow = true;
       arm.add(limb, hand);
-      this.body.add(arm);
+      F.add(arm);
     }
     // 深色小鞋尖 ×2
-    const shoeMat = new THREE.MeshStandardMaterial({ color: PAL.shoe, flatShading: true, roughness: 0.9 });
+    const shoeMat = mat('shoe', () => new THREE.MeshStandardMaterial({ color: PAL.shoe, flatShading: true, roughness: 0.9 }));
     for (const dx of [-0.12, 0.12]) {
       const shoe = new THREE.Mesh(geo('shoe', () => new THREE.BoxGeometry(0.13, 0.08, 0.2)), shoeMat);
       shoe.position.set(dx, 0.04, 0.04);
-      this.body.add(shoe);
+      F.add(shoe);
     }
-    // 厨师帽：帽檐圆柱 + 白色圆顶（体积≈身体）
+    // 帽子/头部装饰 4 变体（按 id 哈希；主厨固定大厨帽并加高一档）
     this.hat = new THREE.Group();
     this.hat.position.y = 0.86;
-    const brim = new THREE.Mesh(geo('brim', () => new THREE.CylinderGeometry(0.3, 0.3, 0.14, 14)), whiteMat);
-    brim.castShadow = true;
-    const band = new THREE.Mesh(geo('band', () => new THREE.CylinderGeometry(0.305, 0.305, 0.05, 14)),
-      new THREE.MeshStandardMaterial({ color: c, flatShading: true, roughness: 0.9 }));
-    band.position.y = -0.06;
-    const shade = new THREE.Mesh(geo('hatShade', () => new THREE.CylinderGeometry(0.28, 0.3, 0.03, 14)), shadeMat);
-    shade.position.y = -0.085;
-    const dome = new THREE.Mesh(geo('dome', () => new THREE.SphereGeometry(0.32, 14, 10)), whiteMat);
-    dome.scale.set(1, 0.78, 1);
-    dome.position.y = 0.18;
-    dome.castShadow = true;
-    this.hat.add(brim, band, shade, dome);
-    this.body.add(this.hat);
+    if (look.hat === 0) {
+      // 经典大厨帽：帽檐圆柱 + 白色圆顶（体积≈身体）
+      const brim = new THREE.Mesh(geo('brim', () => new THREE.CylinderGeometry(0.3, 0.3, 0.14, 14)), whiteMat);
+      brim.castShadow = true;
+      const band = new THREE.Mesh(geo('band', () => new THREE.CylinderGeometry(0.305, 0.305, 0.05, 14)), bandMat);
+      band.position.y = -0.06;
+      const shade = new THREE.Mesh(geo('hatShade', () => new THREE.CylinderGeometry(0.28, 0.3, 0.03, 14)), shadeMat);
+      shade.position.y = -0.085;
+      const dome = new THREE.Mesh(geo('dome', () => new THREE.SphereGeometry(0.32, 14, 10)), whiteMat);
+      dome.scale.set(1, 0.78, 1);
+      dome.position.y = 0.18;
+      dome.castShadow = true;
+      this.hat.add(brim, band, shade, dome);
+      if (look.head) this.hat.scale.set(1.06, 1.32, 1.06); // 主厨：帽子加高一档
+    } else if (look.hat === 1) {
+      // 头巾：身份色包布 + 脑后小结
+      const wrap = new THREE.Mesh(geo('bandana', () => new THREE.SphereGeometry(0.28, 12, 8)), scarfMat);
+      wrap.scale.set(1, 0.58, 1);
+      wrap.position.y = 0.05;
+      wrap.castShadow = true;
+      const knot2 = new THREE.Mesh(geo('bandanaKnot', () => new THREE.SphereGeometry(0.07, 6, 5)), scarfMat);
+      knot2.position.set(0.12, -0.01, -0.25);
+      this.hat.add(wrap, knot2);
+    } else if (look.hat === 2) {
+      // 丸子头：深棕发盖 + 头顶丸子 + 身份色发绳
+      const hair = new THREE.Mesh(geo('hairCap', () => new THREE.SphereGeometry(0.19, 12, 8)), hairMat);
+      hair.scale.set(1, 0.72, 1);
+      hair.position.set(0, -0.06, 0.01);
+      const bun = new THREE.Mesh(geo('bun', () => new THREE.SphereGeometry(0.085, 8, 6)), hairMat);
+      bun.position.y = 0.15;
+      bun.castShadow = true;
+      const tie = new THREE.Mesh(geo('bunTie', () => new THREE.CylinderGeometry(0.09, 0.09, 0.035, 10)), scarfMat);
+      tie.position.y = 0.1;
+      this.hat.add(hair, bun, tie);
+    } else {
+      // 工作帽：白色帽冠 + 身份色帽带 + 前檐
+      const crown = new THREE.Mesh(geo('capCrown', () => new THREE.CylinderGeometry(0.24, 0.26, 0.13, 12)), whiteMat);
+      crown.position.y = 0.045;
+      crown.castShadow = true;
+      const capBand = new THREE.Mesh(geo('capBand', () => new THREE.CylinderGeometry(0.265, 0.265, 0.04, 12)), bandMat);
+      capBand.position.y = -0.015;
+      const visor = new THREE.Mesh(geo('capVisor', () => new THREE.BoxGeometry(0.3, 0.03, 0.18)), shadeMat);
+      visor.position.set(0, -0.02, 0.3);
+      this.hat.add(crown, capBand, visor);
+    }
+    F.add(this.hat);
 
     // 头顶名字精灵（Sprite 自动面向镜头，任何角度都可读）
+    // 高度跟随身高/主厨高帽微调，避免压帽
     this.nameSprite = makeSprite(nameTexture(this.name, '#' + c.getHexString()), 1.1, 0.28);
-    this.nameSprite.position.y = 1.45;
+    this.nameSprite.position.y = 1.45 * look.heightK + (look.head ? 0.22 : 0);
     this.group.add(this.nameSprite);
     // 动作气泡（默认隐藏，单画布重绘复用）
     this.bubble = null;
@@ -203,6 +292,7 @@ export class ChefActor {
     this._popAcc = 0;
     this.setBubble(label || null);
     this.setMark(null);
+    if (kind === 'think') this.setMark('💭'); // 想菜单：翻阅时保留思考标记
     if (station && station.face) {
       const dy = { n: Math.PI, s: 0, e: Math.PI / 2, w: -Math.PI / 2 }[station.face];
       this.faceY = dy;
@@ -255,6 +345,8 @@ export class ChefActor {
 
   cancelWork() {
     if (this.state === 'sit') this.wake();
+    // 离开菜单角：翻起的菜单页复位，避免悬在半空
+    if (this.station && this.station.menuHinge) this.station.menuHinge.rotation.z = 0;
     this.workKind = null;
     this.station = null;
     this.path = [];
@@ -354,6 +446,14 @@ export class ChefActor {
         } else if (k === 'read') { // 看菜谱：点头
           this.body.rotation.x = 0.12 + (frame % 2) * 0.05;
           this.armL.rotation.x = this.armR.rotation.x = -0.7;
+        } else if (k === 'think') { // 想菜单：低头浏览菜单 + 单手节奏翻页 + 💭 浮动
+          this.body.rotation.x = 0.14 + (frame % 2) * 0.04;
+          this.armL.rotation.x = -0.7;
+          this.armR.rotation.x = -0.9 + Math.sin(t * 1.4) * 0.35;
+          if (this.mark) this.mark.position.y = 1.9 + Math.sin(t * 2) * 0.05;
+          if (this.station && this.station.menuHinge) {
+            this.station.menuHinge.rotation.z = Math.abs(Math.sin(t * 1.4)) * 1.25;
+          }
         } else { // speak / serve：喊话
           pos.y = Math.abs(Math.sin(t * 6)) * 0.05;
           this.armL.rotation.x = this.armR.rotation.x = frame % 2 ? -2.2 : -1.8;
@@ -546,7 +646,11 @@ export class ChefActor {
     this.group.traverse((o) => {
       if (o.material) {
         const mats = Array.isArray(o.material) ? o.material : [o.material];
-        for (const m of mats) { if (m.map) m.map.dispose(); m.dispose(); }
+        for (const m of mats) {
+          if (m.userData && m.userData.shared) continue; // 共享材质由 disposeShared 统一释放
+          if (m.map) m.map.dispose();
+          m.dispose();
+        }
       }
       // 几何体为共享缓存，由 disposeShared 统一释放
     });
@@ -555,5 +659,6 @@ export class ChefActor {
 
   static disposeShared() {
     for (const k in G) { G[k].dispose(); delete G[k]; }
+    for (const k in M) { M[k].dispose(); delete M[k]; }
   }
 }

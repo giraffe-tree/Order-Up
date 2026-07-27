@@ -28,15 +28,34 @@ export async function run(ctx) {
     window.dispatchEvent(new KeyboardEvent('keydown', { key: k, bubbles: true }));
 
   try {
-    /* 1. 切换条按 lastTs 倒序（快照初始：codex-overcooked > api-server > hugo-blog） */
+    /* 1. 切换条按项目分组 + 最近活跃排序
+       （mock：codex-overcooked 项目含 k1/k4 两个会话，组内 k1 更新；随后 api-server、hugo-blog 两个单会话项目） */
     await sleep(300);
     const names0 = cardNames();
     check(
-      '切换条按 lastTs 倒序',
-      JSON.stringify(names0) === JSON.stringify(['codex-overcooked', 'api-server', 'hugo-blog']),
+      '切换条按项目组 + lastTs 倒序',
+      JSON.stringify(names0) === JSON.stringify(['codex-overcooked', '多端设计评审', 'api-server', 'hugo-blog']),
       names0.join(' > ')
     );
     check('初始展示第一间（最近活跃）', currentName() === 'codex-overcooked', currentName());
+
+    /* 1b. 项目 → 会话两级分组：同项目多会话归一组并显示项目名标题；单会话项目保持扁平 */
+    const groups = () => [...document.querySelectorAll('#sw-cards .sw-group')];
+    check('项目分组容器渲染（3 个项目）', groups().length === 3, groups().length + ' 组');
+    const grp = groups().find((g) => g.querySelector('.sw-group-name'));
+    check(
+      '多会话项目显示项目名标题（codex-overcooked，2 个会话）',
+      !!grp && grp.querySelector('.sw-group-name').textContent === 'codex-overcooked' &&
+        grp.querySelectorAll('.sw-card').length === 2,
+      grp
+        ? grp.querySelector('.sw-group-name').textContent + ' / ' + grp.querySelectorAll('.sw-card').length + ' 卡'
+        : '没有找到组标题'
+    );
+    check(
+      '单会话项目组不渲染组标题（扁平不臃肿）',
+      groups().filter((g) => !g.querySelector('.sw-group-head')).length === 2,
+      groups().filter((g) => !g.querySelector('.sw-group-head')).length + ' 个单会话组'
+    );
 
     /* 2. 跟随最新（默认开）：别家厨房来新事件时自动跳过去 */
     let jumped = false;
