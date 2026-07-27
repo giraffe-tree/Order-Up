@@ -83,7 +83,7 @@ const steps = [
   [2000, () => { A('c5', 'tool', '高压锅');   log('c5 tool → 高压锅'); }],
   [2400, () => { A('c6', 'think', '想菜单');  log('c6 think → 💭'); }],
   [3000, () => { A('c1', 'speak', '喊话');    log('c1 speak → 出餐口'); }],
-  [3600, () => { A('c2', 'serve', '出餐'); r.dishServed({ name: '番茄汤', by: '小蓝', ts: Date.now() }); log('c2 serve + dish_served'); }],
+  [3600, () => { A('c2', 'serve', '出餐'); r.dishServed({ name: '番茄炒蛋', by: '小蓝', ts: Date.now() }); log('c2 serve + dish_served'); }],
   [4300, () => { A('c3', 'burn', '糊了');     log('c3 burn → 💥'); }],
   [5000, () => { r.chefStatus('c4', 'idle');  log('c4 idle → 回休息区'); }],
   [5600, () => { r.chefStatus('c5', 'done');  log('c5 done → 坐下摘帽'); }],
@@ -93,7 +93,7 @@ const steps = [
     A('c7', 'join', '入职');
     log('c7 addChef + join 入场');
   }],
-  [7000, () => { A('c6', 'read', '再看菜谱'); r.dishServed({ name: '寿司', by: '阿橙', ts: Date.now() }); log('c6 read + 再次 dish_served'); }],
+  [7000, () => { A('c6', 'read', '再看菜谱'); r.dishServed({ name: '清蒸鲈鱼', by: '阿橙', ts: Date.now() }); log('c6 read + 再次 dish_served'); }],
   [7800, () => { A('c3', 'exec', '重新点火'); A('c7', 'tool', '高压锅'); log('c3 exec / c7 tool'); }],
   [8600, () => { A('c1', 'edit', '切配'); A('c2', 'search', '打电话'); log('c1 edit / c2 search'); }],
 ];
@@ -127,7 +127,7 @@ if (PERF) {
           r.chefAction(ids[(Math.random() * ids.length) | 0], { kind, label, detail: 'perf', ts: Date.now() });
         }
       }
-      if (frame % 90 === 45) r.dishServed({ name: '番茄浓汤配时蔬', by: chefs[(Math.random() * chefs.length) | 0].name, ts: Date.now() });
+      if (frame % 90 === 45) r.dishServed({ name: '红烧肉', by: chefs[(Math.random() * chefs.length) | 0].name, ts: Date.now() });
       if (frame % 120 === 60) r.chefAction(ids[(Math.random() * ids.length) | 0], { kind: 'burn', label: '糊了', ts: Date.now() });
       const t0 = performance.now();
       r.step(1 / 60);

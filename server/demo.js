@@ -63,8 +63,6 @@ const POOL = {
   ],
 };
 
-const DISHES = ['宫保鸡丁', '番茄炒蛋', '像素披萨', ' SSE 意面', '回锅肉', 'JSONL 拉面', '黄油曲奇', '麻辣烫'];
-
 const KITCHENS = [
   { id: 'demo-k1', name: 'flomo-codex', cwd: '/Users/demo/project/flomo-codex' },
   { id: 'demo-k2', name: 'pixel-rpg', cwd: '/Users/demo/project/pixel-rpg' },
@@ -122,11 +120,13 @@ export function startDemo(store) {
       const { chef } = store.upsertChef(c.kid, { id, role: h.role, depth: 1 }, { live: true });
       if (chef) chefs.push({ kid: c.kid, id });
     } else if (r < 0.09 || sinceServe >= 18) {
-      // 出餐（serve + dish_served）
+      // 出餐（serve + dish_served）：菜名由 store.serve 按任务摘要从菜品池确定性挑选；
+      // 任务摘要带上出餐序号作 seed，保证同一厨房连续出餐菜品各不相同
       sinceServe = 0;
       const [label, detail] = pick(POOL.serve);
       store.action(c.kid, c.id, 'serve', label, detail, Date.now());
-      store.serve(c.kid, c.id, pick(DISHES), Date.now());
+      const n = (store.kitchens.get(c.kid)?.servedCount || 0) + 1;
+      store.serve(c.kid, c.id, `${detail}（第 ${n} 单）`, Date.now());
     } else if (r < 0.13) {
       const [label, detail] = pick(POOL.burn);
       store.action(c.kid, c.id, 'burn', label, detail, Date.now());

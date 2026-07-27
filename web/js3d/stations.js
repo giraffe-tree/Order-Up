@@ -449,25 +449,118 @@ export function buildKitchen(scene) {
   outer.receiveShadow = true;
   group.add(outer);
 
-  // 墙体：北墙 3.2 高暖砖墙（挂饰舞台），东西墙 1.7 灰泥，南墙 1.5（不挡相机），均带压顶
+  // 墙体：北墙 3.2 高暖砖墙（挂饰舞台），出餐口一带开传菜窗 + 出餐吧台（见下）；
+  // 东西墙 1.7 灰泥，南墙 1.5（不挡相机），均带压顶
   const wallMat = mat('wall', PAL.wall);
   const capMat = mat('wallCap', PAL.wallCap);
   const brickTex = brickTexture({ a: PAL.brickA, b: PAL.brickB, mortar: PAL.mortar });
   brickTex.repeat.set(5, 2.2);
   const brickMat = new THREE.MeshStandardMaterial({ map: brickTex, roughness: 0.95, metalness: 0 });
-  const mkWall = (x, z, w, d, h = 1.7, m = wallMat) => {
-    const wall = box(w, h, d, m);
+  // 挡视线墙体消隐：各侧墙用共享材质的独立克隆（改 opacity 互不牵连），
+  // 网格打 userData.wallSide 标记，由 kitchen3d 按相机方位角整侧平滑淡出/淡入
+  const wallFadeMats = { n: [], s: [], e: [], w: [] };
+  const fadeClone = {}; // side → Map<源材质, 该侧克隆>
+  const sideMat = (side, src) => {
+    const cache = fadeClone[side] || (fadeClone[side] = new Map());
+    if (!cache.has(src)) { const c = src.clone(); cache.set(src, c); wallFadeMats[side].push(c); }
+    return cache.get(src);
+  };
+  const tagWall = (side, meshes) => { for (const m of meshes) m.userData.wallSide = side; };
+  const mkWall = (x, z, w, d, h = 1.7, m = wallMat, side = null) => {
+    const wall = box(w, h, d, side ? sideMat(side, m) : m);
     wall.position.set(x, h / 2, z);
-    const cap = box(w + 0.06, 0.1, d + 0.06, capMat);
+    const cap = box(w + 0.06, 0.1, d + 0.06, side ? sideMat(side, capMat) : capMat);
     cap.position.set(x, h + 0.05, z);
+    if (side) tagWall(side, [wall, cap]);
     group.add(wall, cap);
   };
   const N = -(GH - 1) / 2 - 0.66, S = (GH - 1) / 2 + 0.66, W = -(GW - 1) / 2 - 0.66, E = (GW - 1) / 2 + 0.66;
-  mkWall(0, N, GW + 1.3, 0.3, 3.2, brickMat); // 北墙·高砖墙
-  mkWall(W, 0, 0.3, GH + 1.3, 1.7);           // 西墙
-  mkWall(E, 0, 0.3, GH + 1.3, 1.7);           // 东墙
-  mkWall(-3.75, S, 5.5, 0.3, 1.5);            // 南墙左段（门洞 x∈[-1,1]）
-  mkWall(3.75, S, 5.5, 0.3, 1.5);             // 南墙右段
+  // 北墙·出餐口开放式传菜窗：窗洞开在出餐工位(ix=5,6)正上方，两侧砖墙+墙垛支撑，
+  // 上方砖过梁托住订单票杆(decor)与厨房名牌(kitchen3d)，窗台加宽成贯通内外的出餐吧台
+  const WIN_X = 1.35;   // 窗洞半宽
+  const SILL_Y = 1.16;  // 出餐吧台面上沿 = 窗洞下沿（第一程飞菜落点高度 1.15 恰好落上吧台）
+  const HEAD_Y = 2.2;   // 窗洞上沿 = 过梁下沿
+  const PIER_X = WIN_X + 0.18; // 墙垛中心（内缘与窗洞齐平）
+  mkWall(-(6.65 + PIER_X + 0.21) / 2, N, 6.65 - PIER_X - 0.21, 0.3, 3.2, brickMat, 'n'); // 北墙·左段（挂饰舞台）
+  mkWall((6.65 + PIER_X + 0.21) / 2, N, 6.65 - PIER_X - 0.21, 0.3, 3.2, brickMat, 'n');  // 北墙·右段
+  for (const px of [-PIER_X, PIER_X]) { // 窗洞两侧砖墙垛（比墙面略凸，撑住过梁）
+    const pier = box(0.42, HEAD_Y, 0.46, sideMat('n', brickMat));
+    pier.position.set(px, HEAD_Y / 2, N);
+    const pierCap = box(0.52, 0.1, 0.54, sideMat('n', capMat));
+    pierCap.position.set(px, HEAD_Y + 0.05, N);
+    tagWall('n', [pier, pierCap]);
+    group.add(pier, pierCap);
+  }
+  const header = box(PIER_X * 2 + 0.42, 3.2 - HEAD_Y, 0.3, sideMat('n', brickMat)); // 砖过梁
+  header.position.set(0, (3.2 + HEAD_Y) / 2, N);
+  const headerCap = box(PIER_X * 2 + 0.42, 0.1, 0.36, sideMat('n', capMat));
+  headerCap.position.set(0, 3.25, N);
+  tagWall('n', [header, headerCap]);
+  group.add(header, headerCap);
+  // 窗洞木衬框（嵌在墙体内，左右上三边；下边即吧台面）
+  const trimMat = mat('frameWood', PAL.frameWood);
+  for (const tx of [-WIN_X + 0.05, WIN_X - 0.05]) {
+    const trim = box(0.1, HEAD_Y - SILL_Y, 0.34, sideMat('n', trimMat));
+    trim.position.set(tx, (SILL_Y + HEAD_Y) / 2, N);
+    trim.userData.wallSide = 'n';
+    group.add(trim);
+  }
+  const trimTop = box(WIN_X * 2, 0.1, 0.34, sideMat('n', trimMat));
+  trimTop.position.set(0, HEAD_Y - 0.05, N);
+  trimTop.userData.wallSide = 'n';
+  group.add(trimTop);
+  // 出餐吧台：贯通厨房与餐厅的木台面（等位菜盘在餐厅一侧排队，见 dining.js）
+  const barTop = box(3.4, 0.12, 1.2, mat('counterTop', PAL.counterTop));
+  barTop.position.set(0, SILL_Y - 0.06, N - 0.24);
+  const barFascia = box(3.46, 0.15, 0.06, capMat); // 前檐深色描边
+  barFascia.position.set(0, SILL_Y - 0.07, N - 0.85);
+  group.add(barTop, barFascia);
+  for (const bx of [-1.35, 1.35]) { // 吧台前腿（落到外地面）
+    const leg = box(0.14, SILL_Y + 0.02, 0.14, trimMat);
+    leg.position.set(bx, (SILL_Y - 0.22) / 2, N - 0.72);
+    group.add(leg);
+  }
+  // 木质雨棚：红白拼色板条斜顶（餐厅感）+ 前檐招牌板 + 两斜撑（罩住餐厅一侧吧台）
+  // 雨棚整体随北墙一起淡出（出餐吧台台面/前檐/腿不淡，保持出餐口-餐厅衔接可读）
+  const slatRed = mat('lampShade', PAL.lampShade, { roughness: 0.85 });
+  const slatWhite = mat('paper', PAL.paper, { roughness: 0.85 });
+  for (let i = 0; i < 7; i++) { // 沿 x 交替拼色，整列随前檐一起下斜
+    const slat = box(0.53, 0.07, 1.2, sideMat('n', i % 2 ? slatWhite : slatRed));
+    slat.position.set(-1.59 + i * 0.53, 2.66, N - 0.72);
+    slat.rotation.x = -0.24; // 前（北）檐压低
+    slat.userData.wallSide = 'n';
+    group.add(slat);
+  }
+  // 前檐招牌板：立在雨棚前缘，板面越过墙顶视线、迎着镜头，中央挂 🍽 小招牌
+  const awnValance = box(3.7, 0.3, 0.05, sideMat('n', capMat));
+  awnValance.position.set(0, 2.44, N - 1.31);
+  awnValance.userData.wallSide = 'n';
+  const valanceIcon = new THREE.Mesh(new THREE.PlaneGeometry(0.26, 0.26),
+    new THREE.MeshBasicMaterial({ map: iconTexture('🍽'), transparent: true }));
+  valanceIcon.position.set(0, 2.44, N - 1.27);
+  valanceIcon.userData.wallSide = 'n';
+  wallFadeMats.n.push(valanceIcon.material); // 独立材质直接纳入北墙淡出组
+  group.add(awnValance, valanceIcon);
+  for (const sx of [-1.55, 1.55]) {
+    const strut = box(0.07, 0.55, 0.07, sideMat('n', trimMat));
+    strut.position.set(sx, 2.42, N - 0.55);
+    strut.rotation.x = 0.65;
+    strut.userData.wallSide = 'n';
+    group.add(strut);
+  }
+  // 暖灯串：挂在招牌板下沿一排小灯泡，中段微微下垂（越过墙顶可见，兼作餐厅氛围光）
+  const bulbMat = mat('awnBulb', PAL.bulb, { emissive: PAL.bulb, emissiveIntensity: 1.4, roughness: 0.5 });
+  for (let i = 0; i < 9; i++) {
+    const bx = -1.6 + i * 0.4;
+    const bulb = new THREE.Mesh(geo('awnBulb', () => new THREE.SphereGeometry(0.05, 8, 6)), sideMat('n', bulbMat));
+    bulb.position.set(bx, 2.24 - 0.07 * (1 - (bx / 1.6) ** 2), N - 1.29);
+    bulb.userData.wallSide = 'n';
+    group.add(bulb);
+  }
+  mkWall(W, 0, 0.3, GH + 1.3, 1.7, wallMat, 'w'); // 西墙
+  mkWall(E, 0, 0.3, GH + 1.3, 1.7, wallMat, 'e'); // 东墙
+  mkWall(-3.75, S, 5.5, 0.3, 1.5, wallMat, 's'); // 南墙左段（门洞 x∈[-1,1]）
+  mkWall(3.75, S, 5.5, 0.3, 1.5, wallMat, 's');  // 南墙右段
   // 门框 + 门垫（门垫底面抬高 0.01，不与地板顶面共面，避免门口地面 z-fighting）
   const post1 = box(0.24, 2.0, 0.34, mat('frameWood', PAL.frameWood));
   post1.position.set(-1.12, 1.0, S);
@@ -482,29 +575,6 @@ export function buildKitchen(scene) {
     new THREE.MeshBasicMaterial({ map: iconTexture('🚪'), transparent: true }));
   doorIcon.position.set(0, 2.45, S + 0.2);
   group.add(doorIcon);
-
-  // 出餐口窗洞（挂在北墙内侧面：北墙已加高为 3.2，窗框须贴在墙面而非埋进墙里）
-  const win = new THREE.Group();
-  const winZ = N + 0.15 + 0.1;      // 窗框中心：内侧面(N+0.15)前方
-  const mkBar = (w, h, px, py) => {
-    const b = box(w, h, 0.18, mat('frameWood', PAL.frameWood));
-    b.position.set(px, py, winZ);
-    win.add(b);
-  };
-  mkBar(2.4, 0.16, 0, 2.06);         // 上框
-  mkBar(2.4, 0.14, 0, 1.02);         // 下框（窗台）
-  mkBar(0.16, 1.2, -1.12, 1.54);     // 左框
-  mkBar(0.16, 1.2, 1.12, 1.54);      // 右框
-  const hole = new THREE.Mesh(new THREE.PlaneGeometry(2.1, 0.9),
-    new THREE.MeshBasicMaterial({ color: 0x1A1008 })); // 暖黑洞口（禁蓝紫）
-  hole.position.set(0, 1.54, N + 0.15 + 0.005);
-  win.add(hole);
-  for (let i = 0; i < 3; i++) { // 金属格栅竖条
-    const bar = box(0.05, 0.9, 0.05, mat('grate', PAL.grate, { metalness: 0.4 }));
-    bar.position.set(-0.5 + i * 0.5, 1.54, winZ + 0.04);
-    win.add(bar);
-  }
-  group.add(win);
 
   // 墙面火把 ×2（北墙两端）
   for (const tx of [-4.2, 4.2]) {
@@ -522,7 +592,7 @@ export function buildKitchen(scene) {
   for (const s of LAYOUT) spots.push(buildStation(group, s));
 
   const walk = buildWalkGrid();
-  return { group, spots, walk };
+  return { group, spots, walk, wallFadeMats };
 }
 
 // 释放场景静态资源（共享材质/几何体整体 dispose）

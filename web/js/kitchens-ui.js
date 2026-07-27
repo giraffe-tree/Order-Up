@@ -168,8 +168,10 @@
       card.appendChild(el('span', 'kname', k.name));
       if (k.lazy) card.appendChild(el('span', 'lazy-tag', (k.chefs && k.chefs.length) ? '历史未加载' : '未加载'));
       else if (!k.active) card.appendChild(el('span', 'closed-tag', '歇业中'));
-      card.appendChild(el('span', 'kmeta',
-        '👨‍🍳' + (k.chefs ? k.chefs.length : 0) + ' 🍽' + (k.servedCount || 0)));
+      var meta = el('span', 'kmeta');
+      meta.appendChild(el('span', 'km km-chefs', '👨‍🍳 ' + (k.chefs ? k.chefs.length : 0)));
+      meta.appendChild(el('span', 'km km-served', '🍽 ' + (k.servedCount || 0)));
+      card.appendChild(meta);
       var n = unread[k.id] || 0;
       if (n > 0) card.appendChild(el('span', 'badge', n > 99 ? '99+' : String(n)));
       card.addEventListener('click', function () { switchTo(k.id, 'manual'); });
@@ -209,6 +211,9 @@
         }
       });
       if (tabsEl) tabsEl.hidden = !multiProject; // 只有一个项目：标签排整排隐藏
+      // 一间厨房都没有：前后箭头一并隐藏（空态更干净）
+      if (prevEl) prevEl.hidden = !order.length;
+      if (nextEl) nextEl.hidden = !order.length;
       // 当前会话卡片 / 当前项目标签始终保持在可视区内
       if (curCardEl && curCardEl.scrollIntoView) {
         curCardEl.scrollIntoView({ block: 'nearest', inline: 'nearest' });

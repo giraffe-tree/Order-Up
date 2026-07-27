@@ -213,10 +213,13 @@
         k = ensureKitchen(state, String(ev.kitchenId));
         k.servedCount = (k.servedCount || 0) + 1;
         var dish = ev.dish || { name: '神秘料理', by: '', ts: Date.now() };
+        // detail = 菜名 · 任务摘要（无 task 时只显示菜名）
+        var dishDetail = dish.name || '';
+        if (dish.task) dishDetail = dishDetail ? dishDetail + ' · ' + dish.task : dish.task;
         pushFeed(state, {
           ts: dish.ts || Date.now(), kitchenId: k.id, kitchenName: k.name,
           chefName: dish.by || '厨师', color: '#d95f4b',
-          kind: 'serve', label: '出餐 ✅', detail: dish.name || ''
+          kind: 'serve', label: '出餐 ✅', detail: dishDetail
         });
         effects.push({ type: 'dish_served', kitchenId: k.id, dish: dish, servedCount: k.servedCount });
         break;

@@ -3,6 +3,7 @@
 
 import path from 'node:path';
 import { CHEF_NAMES, chefNameIndex } from './chef-names.js';
+import { pickDish } from '../web/js3d/dishes.js';
 
 export const ACTION_KINDS = ['read', 'edit', 'exec', 'search', 'tool', 'think', 'speak', 'talk', 'serve', 'burn', 'join', 'idle'];
 
@@ -189,13 +190,17 @@ export class KitchenStore {
     if (changed) this.emit({ type: 'chef_status', kitchenId, chefId, status: chef.status });
   }
 
-  serve(kitchenId, chefId, name, ts) {
+  serve(kitchenId, chefId, taskName, ts) {
     const k = this.kitchens.get(kitchenId);
     const chef = k?.chefs.find((c) => c.id === chefId);
     if (!k || !chef) return;
     ts = ts || Date.now();
     k.servedCount += 1;
-    const dish = { name: trunc(name, 24) || `第 ${k.servedCount} 道菜`, by: chef.name, ts };
+    // 菜名从菜品池按任务确定性挑选：同一任务在同一厨房永远同一道菜，不同任务均匀分布。
+    // dish.task 保留原任务摘要（兜底链结果），供订单流水展示。
+    const d = pickDish(String(taskName || '') + '@' + kitchenId);
+    const task = trunc(taskName, 24) || `第 ${k.servedCount} 道菜`;
+    const dish = { name: d.name, task, by: chef.name, ts };
     this.emit({ type: 'dish_served', kitchenId, dish });
   }
 
@@ -438,8 +443,8 @@ export class KitchenStore {
         this._act(p, ts, threadId, live, 'think', '开工', '接到新订单，开始干活');
         break;
       case 'task_complete': {
-        // 菜名兜底链：最后一条消息里的有效标题行（剥离 markdown、跳过 JSON/围栏）
-        // → 线程标题 → 厨房名 → 第 N 道菜
+        // 任务摘要兜底链：最后一条消息里的有效标题行（剥离 markdown、跳过 JSON/围栏）
+        // → 线程标题 → 厨房名 → 第 N 道菜；菜名则由 serve() 按任务摘要从菜品池确定性挑选
         const first = dishNameFrom(p.last_agent_message);
         const fallback = this.threadNames.get(threadId) || '';
         this._act(p, ts, threadId, live, 'serve', '出餐', first || fallback || '任务完成，上菜');

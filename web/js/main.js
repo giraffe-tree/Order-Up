@@ -298,6 +298,7 @@ function seedFeed() {
 }
 
 /* ---- 数据接入 ---- */
+let wasConnBad = false; // 上一次连接状态是否断线（用于重连成功 toast）
 const handlers = {
   onSnapshot(kitchens) {
     const prevId = ui.currentId();
@@ -334,6 +335,9 @@ const handlers = {
           // 传完整 chef：已下班退场（从场景移除）的厨师来新事件时可重新从门口入职
           renderer.chefAction(ef.chef.id, ef.action, ef.chef);
           if (SOUND_KIND[ef.action && ef.action.kind]) playSound(SOUND_KIND[ef.action.kind]);
+          if (ef.action && ef.action.kind === 'burn' && window.COToast) {
+            window.COToast('💥 糊了' + (ef.chef && ef.chef.name ? ' · ' + ef.chef.name : ''), 'burn');
+          }
           break;
         case 'chef_status':
           renderer.chefStatus(ef.chefId, ef.status);
@@ -350,6 +354,7 @@ const handlers = {
         case 'dish_served':
           renderer.dishServed(ef.dish);
           playSound('serve');
+          if (window.COToast) window.COToast('✅ 出餐 +1' + (ef.dish && ef.dish.name ? ' · ' + ef.dish.name : ''), 'serve');
           break;
       }
     });
@@ -370,6 +375,9 @@ const handlers = {
     connEl.className = 'conn' + (cls ? ' ' + cls : '');
     // 断线时舞台顶部同时挂出明显横幅（重连成功自动消失）
     connBanner.hidden = cls !== 'bad';
+    // 断线重连成功：弹一条轻提示
+    if (wasConnBad && cls !== 'bad' && window.COToast) window.COToast('📡 已连接，厨房开张！', 'info');
+    wasConnBad = cls === 'bad';
   }
 };
 

@@ -1,7 +1,7 @@
 // 调色板 —— 严格取自 docs/art-direction.md 第 6 节（截图采样值）
 export const PAL = {
   floorLight: 0xD2A06B, // 木地板·浅
-  floorDark:  0x96663C, // 木地板·深（提亮）
+  floorDark:  0x845730, // 木地板·深（采样 #78502E 微调提亮，保卡通明度）
   counterTop: 0xFEC457, // 台面·明黄
   counterBody:0x8A5A33, // 棕木台面体
   woodDark:   0x7A5230,

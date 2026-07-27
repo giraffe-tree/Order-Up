@@ -115,6 +115,16 @@ export function drawPlank(g, w, h, text, { fontSize = 44, bg = '#7A5230', fg = '
   g.clearRect(0, 0, w, h);
   g.fillStyle = bg;
   g.fillRect(0, 0, w, h);
+  // 木纹丝：顺纹细长线（确定性排布，对象池反复重绘不闪），深丝为主、间一道浅丝
+  g.lineWidth = 2;
+  const grains = [0.16, 0.28, 0.44, 0.58, 0.82, 0.92];
+  grains.forEach((fy, i) => {
+    g.strokeStyle = i % 3 === 2 ? 'rgba(255,238,205,0.10)' : 'rgba(0,0,0,0.10)';
+    g.beginPath();
+    g.moveTo(6, h * fy);
+    g.quadraticCurveTo(w * 0.5, h * fy + (i % 2 ? 3 : -3), w - 6, h * fy);
+    g.stroke();
+  });
   // 木纹深色边框 + 内侧一道奶油色高光，营造卡通「雕刻招牌」感
   g.strokeStyle = '#2A2138';
   g.lineWidth = 8;
@@ -185,21 +195,62 @@ function shade(hex, f) {
   return `rgb(${c(r)},${c(g)},${c(b)})`;
 }
 
-// 棋盘格地板：双色相间 + 每格色差 + 砖缝 + 磨损斑/划痕（seed 固定，每次构建一致）
-export function floorTexture(gw, gh, { light = 0xD2A06B, dark = 0x96663C, grout = 0x6E4A2F, cell = 128 } = {}) {
+// 两色连续混合后再做明度微调（砖块色差用，比二选一更细腻）
+function mixShade(hexA, hexB, t, f) {
+  const [r1, g1, b1] = hexRGB(hexA), [r2, g2, b2] = hexRGB(hexB);
+  const c = (v) => Math.max(0, Math.min(255, Math.round(v * f)));
+  return `rgb(${c(r1 + (r2 - r1) * t)},${c(g1 + (g2 - g1) * t)},${c(b1 + (b2 - b1) * t)})`;
+}
+
+// 木地板：顺纹拼板 + 板缝 + 每板色差 + 木纹丝/木节 + 磨损斑/划痕（seed 固定，每次构建一致）。
+// 保留原棋盘格明暗交替作为格级基调（整体色相/明度不变），格内细分顺纹木板。
+export function floorTexture(gw, gh, { light = 0xD2A06B, dark = 0x845730, grout = 0x6E4A2F, cell = 128 } = {}) {
   const w = gw * cell, h = gh * cell;
   const [c, g] = makeCanvas(w, h);
   const rnd = mulberry32(20260727);
+  const PLANKS = 3; // 每格 3 块顺纹拼板（沿 x 方向顺纹）
+  const ph = cell / PLANKS;
   for (let iz = 0; iz < gh; iz++) {
     for (let ix = 0; ix < gw; ix++) {
       const base = (ix + iz) % 2 === 0 ? light : dark;
-      const jitter = 0.90 + rnd() * 0.18;               // 每格色差
-      g.fillStyle = shade(base, jitter);
-      g.fillRect(ix * cell, iz * cell, cell, cell);
-      // 格内轻微拉丝（木纹感）
-      g.fillStyle = `rgba(0,0,0,${0.03 + rnd() * 0.04})`;
-      const sy = iz * cell + rnd() * cell;
-      g.fillRect(ix * cell, sy, cell, 2 + rnd() * 3);
+      const x0 = ix * cell, y0 = iz * cell;
+      for (let p = 0; p < PLANKS; p++) {
+        const py = y0 + p * ph;
+        const jitter = 0.90 + rnd() * 0.18;             // 每板色差
+        g.fillStyle = shade(base, jitter);
+        g.fillRect(x0, py, cell, ph);
+        // 木纹丝：顺纹细长条纹，深丝为主、偶夹浅丝，两段错位模拟轻微波纹
+        const lines = 3 + (rnd() * 3 | 0);
+        for (let k = 0; k < lines; k++) {
+          const ly = py + 2 + rnd() * (ph - 4);
+          const lx = x0 + rnd() * cell * 0.3;
+          const len = cell * (0.35 + rnd() * 0.6);
+          const dark1 = rnd() > 0.3;
+          g.fillStyle = dark1 ? `rgba(60,36,16,${0.04 + rnd() * 0.06})` : `rgba(255,238,205,${0.04 + rnd() * 0.05})`;
+          g.fillRect(lx, ly, len, 1 + rnd());
+          g.fillRect(lx + len * 0.4, ly + 1, len * 0.35, 1);
+        }
+        // 木节（偶发）：深色小环 + 芯
+        if (rnd() > 0.84) {
+          const kx = x0 + cell * (0.2 + rnd() * 0.6), ky = py + ph * (0.3 + rnd() * 0.4);
+          g.strokeStyle = 'rgba(56,34,16,0.30)';
+          g.lineWidth = 1.5;
+          g.beginPath(); g.ellipse(kx, ky, 4 + rnd() * 3, 2.5 + rnd() * 2, 0, 0, Math.PI * 2); g.stroke();
+          g.fillStyle = 'rgba(48,28,12,0.35)';
+          g.beginPath(); g.ellipse(kx, ky, 1.8, 1.2, 0, 0, Math.PI * 2); g.fill();
+        }
+        // 板端错缝（竖向短缝，各板位置随机错开）
+        const bx = x0 + cell * (0.22 + rnd() * 0.56);
+        g.fillStyle = 'rgba(50,30,14,0.38)';
+        g.fillRect(bx, py + 1, 1.5, ph - 2);
+        // 板缝（横向）：深色缝 + 下侧一道浅高光，木板更有层次
+        if (p > 0) {
+          g.fillStyle = 'rgba(58,36,18,0.42)';
+          g.fillRect(x0, py - 1, cell, 2);
+          g.fillStyle = 'rgba(255,236,200,0.08)';
+          g.fillRect(x0, py + 1, cell, 1);
+        }
+      }
     }
   }
   // 磨损斑：半透明明暗椭圆
@@ -340,31 +391,55 @@ export function glowDiscTexture({ size = 128, inner = 'rgba(255,226,166,0.9)', m
   return toTexture(c);
 }
 
-// 暖砖墙：错缝砖块 + 灰泥缝 + 每砖色差（可 RepeatWrapping 平铺）
+// 暖砖墙：错缝砖块 + 灰泥缝 + 每砖连续色差 + 砖面细颗粒（可 RepeatWrapping 平铺）
 export function brickTexture({ a = 0xC79F72, b = 0xAD8557, mortar = 0xE2CEA9, tw = 512, th = 256, rows = 4, cols = 4 } = {}) {
   const [c, g] = makeCanvas(tw, th);
   const rnd = mulberry32(20260728);
   g.fillStyle = shade(mortar, 1);
   g.fillRect(0, 0, tw, th);
+  // 灰泥做旧：局部明暗斑 + 细沙点，缝不显得平涂
+  for (let i = 0; i < 30; i++) {
+    g.fillStyle = rnd() > 0.5 ? `rgba(120,92,60,${0.04 + rnd() * 0.05})` : `rgba(255,244,220,${0.04 + rnd() * 0.05})`;
+    g.beginPath();
+    g.ellipse(rnd() * tw, rnd() * th, 8 + rnd() * 30, 4 + rnd() * 14, rnd() * 3, 0, Math.PI * 2);
+    g.fill();
+  }
+  for (let i = 0; i < 160; i++) {
+    g.fillStyle = `rgba(110,84,56,${0.05 + rnd() * 0.08})`;
+    g.fillRect(rnd() * tw, rnd() * th, 1 + rnd(), 1 + rnd());
+  }
   const bw = tw / cols, bh = th / rows, gap = Math.max(3, bh * 0.12);
   for (let r = 0; r < rows; r++) {
     const off = (r % 2) * bw * 0.5;
     for (let cx = -1; cx < cols + 1; cx++) {
       const x = cx * bw + off, y = r * bh;
-      const f = 0.9 + rnd() * 0.2;
-      const base = rnd() > 0.5 ? a : b;
-      g.fillStyle = shade(base, f);
-      g.fillRect(x + gap / 2, y + gap / 2, bw - gap, bh - gap);
+      const bx = x + gap / 2, by = y + gap / 2, bw2 = bw - gap, bh2 = bh - gap;
+      // 每砖色差：a/b 连续混合 + 明度抖动
+      g.fillStyle = mixShade(a, b, rnd(), 0.92 + rnd() * 0.16);
+      g.fillRect(bx, by, bw2, bh2);
+      // 砖面细颗粒噪点（近看不平涂）
+      for (let k = 0; k < 8; k++) {
+        const dark1 = rnd() > 0.4;
+        g.fillStyle = dark1 ? `rgba(70,44,22,${0.04 + rnd() * 0.07})` : `rgba(255,240,214,${0.04 + rnd() * 0.06})`;
+        g.fillRect(bx + rnd() * bw2, by + rnd() * bh2, 1 + rnd() * 2, 1 + rnd() * 2);
+      }
       // 砖面顶部微光、底部微暗，增加体积感
       g.fillStyle = 'rgba(255,240,214,0.10)';
-      g.fillRect(x + gap / 2, y + gap / 2, bw - gap, 3);
+      g.fillRect(bx, by, bw2, 3);
       g.fillStyle = 'rgba(50,30,14,0.12)';
-      g.fillRect(x + gap / 2, y + bh - gap / 2 - 3, bw - gap, 3);
+      g.fillRect(bx, y + bh - gap / 2 - 3, bw2, 3);
       // 偶发小疵点
       if (rnd() > 0.6) {
         g.fillStyle = `rgba(60,36,18,${0.05 + rnd() * 0.08})`;
         g.beginPath();
         g.ellipse(x + bw * (0.2 + rnd() * 0.6), y + bh * (0.3 + rnd() * 0.4), 3 + rnd() * 8, 2 + rnd() * 5, rnd() * 3, 0, Math.PI * 2);
+        g.fill();
+      }
+      // 偶发火烧暗斑（更大更淡）
+      if (rnd() > 0.78) {
+        g.fillStyle = `rgba(52,30,16,${0.05 + rnd() * 0.05})`;
+        g.beginPath();
+        g.ellipse(bx + bw2 * (0.3 + rnd() * 0.4), by + bh2 * (0.3 + rnd() * 0.4), bw2 * 0.3, bh2 * 0.3, rnd() * 3, 0, Math.PI * 2);
         g.fill();
       }
     }

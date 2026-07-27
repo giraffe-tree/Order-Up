@@ -1,33 +1,42 @@
-// 餐厅区：厨房北墙外的露天小餐厅 —— 木平台 / 餐桌椅 / 蜡烛 / 卡通客人
-// 上菜动线：厨师 → 出餐口窗台（kitchen3d.dishServed 第一程）→ 本模块接力第二程：
-// 窗台排队（最多 4 盘可见）→ 有等菜客人 → 菜飞越北墙落上餐桌 → 客人低头用餐
-// → 满意起身、从北门径走入夜色消失（回池复用）→ 新客人陆续从北门径入场落座。
-// 客人等菜超过 PATIENCE 秒没吃到会失望离席；满座时新菜在窗台排队。
-// 歇业（setDim<1）：蜡烛光晕收敛、不再迎接新客人，在座客人吃完/等不到陆续离开。
+// 餐厅区：出餐吧台前的露天小餐厅 —— 木平台 / 餐桌椅 / 蜡烛 / 卡通客人 / 服务员小二
+// 上菜动线：厨师 → 出餐口吧台（kitchen3d.dishServed 第一程）→ 本模块接力第二程：
+// 吧台排队（最多 4 盘可见）→ 有等菜客人 → 服务员小碎步到吧台前取餐、顶盘送到客人桌上
+// → 客人低头用餐 8–15 秒（中途弹「好吃！」）→ 满意起身、从北门径走入夜色消失（回池复用）
+// → 新客人陆续从北门径入场落座。服务员一次端一盘，送完再取下一盘（吧台可短暂积盘）。
+// 客人等菜超过 PATIENCE 秒没吃到会失望离席；满座时新菜在吧台排队。
+// 歇业（setDim<1）：蜡烛光晕收敛、服务员不再接新单（手上的送完）、不再迎接新客人，
+// 在座客人吃完/等不到陆续离开。
 // 全部程序化低模：几何/材质走模块级共享缓存；客人固定池（MAX_GUESTS）复用，零每帧分配。
-// 摆放 z 区间经过视线计算：45°~70° 全俯角范围内都不会被 3.2 高北墙挡住。
+// 餐桌拉到出餐吧台正前方，与厨房隔窗相望连成一体；z 区间经过视线计算：
+// 默认 60° 俯角下 z≈-8.0 视线恰好擦过 3.2 砖墙顶落地，桌椅客人完整可见（再近会被墙挡）。
 // buildDining(scene, fx) → { group, update(dt, t), serveDish(name), setDim(d), stats(), dispose() }
 import * as THREE from '../vendor/three.module.min.js';
 import { PAL } from './palette.js';
 import { GH } from './stations.js';
 import { glowDiscTexture } from './textures.js';
+import { dishLook } from './dishes.js';
+import { buildDishFood, disposeDishCache } from './fx.js';
 
 const GY = -0.12;                                              // 外地面上表面（与 stations/backdrop 一致）
-const WIN = { x: 0, y: 1.15, z: -(GH - 1) / 2 - 0.66 + 0.3 };  // 出餐口窗台（第二程起飞点，同 kitchen3d 落点）
+const WIN = { x: 0, y: 1.15, z: -(GH - 1) / 2 - 0.66 + 0.3 };  // 出餐口吧台内侧（第二程起飞点，同 kitchen3d 落点）
+const SILL = { y: 1.19, z: -(GH - 1) / 2 - 0.66 - 0.04 };      // 等位菜盘在吧台面上的摆放高度/进深
 const GATE = { x: 0, z: -10.9 };                               // 北栅栏门径（backdrop 在北面留的缺口）
 const SPAWN_Z = -13.8;                                         // 客人入场/退场没入夜色的位置
 const MAX_GUESTS = 6;                                          // 客人池（≥ 座位数：离席路上的也占一个）
-const MAX_SILL = 4;                                            // 窗台上可见的等位菜盘
-const MAX_QUEUE = 6;                                           // 窗台排队上限，溢出直接丢弃（高频出餐不堆积）
+const MAX_SILL = 4;                                            // 吧台上可见的等位菜盘
+const MAX_QUEUE = 6;                                           // 吧台排队上限，溢出直接丢弃（高频出餐不堆积）
 const PATIENCE = 26;                                           // 等菜耐心（秒），超时空手离席
 const TABLE_TOP = 0.69;                                        // 餐桌面上沿高度
+const BACK_LANE = -9.5;                                        // 餐桌北侧后巷（服务员送餐/回位走廊，不跨客人入场动线）
 
-// 餐桌：座位在桌子东西侧面对面（z 向只伸出桌面半径，不顶到北栅栏）；
-// z ≤ -9.3 保证 45° 低俯角下桌面与客人仍越过北墙顶可见
+// 餐桌：出餐吧台正前方一排，客人围坐吧台前等菜，与厨房隔传菜窗相望；
+// 座位在桌子东西侧面对面（z 向只伸出桌面半径，不顶到北栅栏）；
+// z ≈ -8.0 是视线临界：默认 60° 俯角下视线恰好擦过 3.2 砖墙顶落到地面，
+// 客人全身/桌椅完整可见（再近会被墙挡下半身，再远就与吧台脱节）
 const TABLES = [
-  { x: -3.6, z: -9.4, seats: 2 },
-  { x: 0.3, z: -9.8, seats: 2 },
-  { x: 3.8, z: -9.3, seats: 1 },
+  { x: -2.4, z: -8.0, seats: 2 },
+  { x: 0.1, z: -8.3, seats: 2 },
+  { x: 2.5, z: -8.0, seats: 1 },
 ];
 
 // 便服配色：低饱和日常色，与厨师制服色板（CHEF_OUTFITS 高饱和）明显区分
@@ -51,6 +60,18 @@ function box(w, h, d, m) {
   const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), m);
   mesh.castShadow = true;
   return mesh;
+}
+
+// 给餐盘容器挂上对应菜品（同菜名不重建；小菜件几何/材质走 fx 共享缓存，仅低频重建）
+function setPlateDish(holder, name, plateR = 0.2) {
+  const look = dishLook(name);
+  if (holder._dishName === look.name) return;
+  holder._dishName = look.name;
+  if (holder._food) holder.remove(holder._food);
+  const food = buildDishFood(look, plateR);
+  food.position.y = 0.028;
+  holder.add(food);
+  holder._food = food;
 }
 
 // ---------- 客人（Q 版低模：无厨师帽、便服、发型/针织帽，与厨师一眼区分） ----------
@@ -211,11 +232,13 @@ class Guest {
     this.armR.rotation.set(0, 0, 0);
   }
 
-  // 菜已上桌（第二程飞行落点时刻）
+  // 菜已上桌（服务员放盘时刻）
   beginEat(t, dur) {
     this.state = 'eating';
     this._eatStart = t;
     this._eatUntil = t + dur;
+    this._praiseAt = t + dur * 0.55; // 吃到一半弹「好吃！」
+    this._praised = false;
     this._steamAcc = 0;
     this.spoon.visible = true;
   }
@@ -315,6 +338,12 @@ class Guest {
           const d = this.seat.dishPos;
           this.fx.spawn('steam', d.x + (Math.random() - 0.5) * 0.08, TABLE_TOP + 0.16, d.z, 0, 0.5, 0, 0.65);
         }
+        // 吃到一半弹一句夸奖
+        if (!this._praised && t >= this._praiseAt) {
+          this._praised = true;
+          this.fx.popup(PRAISE[(Math.random() * PRAISE.length) | 0],
+            new THREE.Vector3(pos.x, 1.25, pos.z), '#6FA34E');
+        }
         if (t >= this._eatUntil) return 'finished';
         break;
       }
@@ -331,6 +360,217 @@ class Guest {
   }
 }
 
+// ---------- 服务员（Q 版店小二：红头巾 + 枣红马甲 + 米白围裙 + 白衬衫袖，矮胖圆身，不戴厨师帽） ----------
+// 状态机：idle(待命点待机) → toSill(小碎步去吧台) → pickup(取餐，顶盘过头)
+//   → toTable(端到客人桌旁) → serve(放菜上桌) → back(空手回待命点) → idle。
+// 行走与厨师同风格：身体几乎不转只平移 + 上下颠簸 + 挤压拉伸，转向平滑；一次端一盘。
+class Waiter {
+  constructor(fx) {
+    this.fx = fx;
+    this.state = 'idle';
+    this.group = new THREE.Group();
+    this.path = [];
+    this.entry = null;  // 手上这趟的吧台队列项
+    this.target = null; // 目标座位
+    this.animT = 0;
+    this.faceY = 0;
+    this._pause = 0;
+    this._walking = false;
+    this._blinkT = 2;
+    this._glanceT = 3;
+    this._glanceYaw = 0;
+    this._build();
+  }
+
+  _build() {
+    this.body = new THREE.Group();
+    this.group.add(this.body);
+    const F = new THREE.Group();
+    F.scale.set(1.15, 0.9, 1.15); // 矮胖圆身（比厨师矮一截、宽一圈）
+    this.body.add(F);
+    const skinMat = mat('wSkin', 0xF2C9A0);
+    // 枣红马甲 + 米白围裙（制服感，与厨师白袍大帽、客人便服一眼区分）
+    const torso = new THREE.Mesh(geo('wTorso', () => new THREE.CylinderGeometry(0.27, 0.33, 0.48, 14)), mat('wVest', 0x8C4A3A));
+    torso.position.y = 0.36;
+    torso.castShadow = true;
+    const apron = new THREE.Mesh(geo('wApron', () => new THREE.BoxGeometry(0.34, 0.3, 0.05)), mat('wApron', PAL.paper));
+    apron.position.set(0, 0.28, 0.28);
+    F.add(torso, apron);
+    // 脸 + 眼睛（同客人程序化脸）
+    const face = new THREE.Mesh(geo('gFace', () => new THREE.SphereGeometry(0.16, 12, 10)), skinMat);
+    face.position.set(0, 0.68, 0.07);
+    face.castShadow = true;
+    F.add(face);
+    const eyeMat = mat('gEye', 0x2A2138);
+    const hlMat = mat('gEyeHL', 0xFFFDF6);
+    this.eyeGroup = new THREE.Group();
+    this.eyeGroup.position.set(0, 0.71, 0.19);
+    for (const dx of [-0.055, 0.055]) {
+      const eye = new THREE.Mesh(geo('gEye', () => new THREE.SphereGeometry(0.023, 6, 5)), eyeMat);
+      eye.position.set(dx, 0, 0.02);
+      const hl = new THREE.Mesh(geo('gEyeHL', () => new THREE.SphereGeometry(0.008, 4, 3)), hlMat);
+      hl.position.set(dx + 0.011, 0.011, 0.042);
+      this.eyeGroup.add(eye, hl);
+    }
+    F.add(this.eyeGroup);
+    // 红头巾 + 脑后巾结（代替帽子，是「小二」的标志性轮廓）
+    const bandMat = mat('wBand', PAL.red);
+    const band = new THREE.Mesh(geo('wBand', () => new THREE.SphereGeometry(0.185, 12, 8)), bandMat);
+    band.scale.set(1, 0.55, 1);
+    band.position.set(0, 0.76, 0.02);
+    band.castShadow = true;
+    const knot = new THREE.Mesh(geo('wKnot', () => new THREE.BoxGeometry(0.09, 0.07, 0.07)), bandMat);
+    knot.position.set(0, 0.74, -0.17);
+    F.add(band, knot);
+    // 手臂（白衬衫袖 + 肤色手，无白手套）
+    this.armL = new THREE.Group(); this.armR = new THREE.Group();
+    this.armL.position.set(-0.3, 0.48, 0); this.armR.position.set(0.3, 0.48, 0);
+    const sleeveMat = mat('wSleeve', 0xF4EFE2);
+    for (const arm of [this.armL, this.armR]) {
+      const limb = new THREE.Mesh(geo('wLimb', () => new THREE.CylinderGeometry(0.05, 0.05, 0.2, 8)), sleeveMat);
+      limb.position.y = -0.09;
+      arm.add(limb);
+      const hand = new THREE.Mesh(geo('gHand', () => new THREE.SphereGeometry(0.075, 8, 6)), skinMat);
+      hand.position.y = -0.21;
+      hand.castShadow = true;
+      arm.add(hand);
+      F.add(arm);
+    }
+    // 深色小鞋尖
+    const shoeMat = mat('gShoe', PAL.shoe);
+    for (const dx of [-0.12, 0.12]) {
+      const shoe = new THREE.Mesh(geo('gShoe', () => new THREE.BoxGeometry(0.12, 0.07, 0.18)), shoeMat);
+      shoe.position.set(dx, 0.035, 0.03);
+      F.add(shoe);
+    }
+    // 头顶菜盘（取餐后可见，随身体颠簸；菜品按所端菜名拼装，取餐时切换）
+    this.carry = new THREE.Group();
+    const cplate = new THREE.Mesh(geo('gDish', () => new THREE.CylinderGeometry(0.2, 0.17, 0.04, 14)),
+      mat('gPlate', PAL.plate, { roughness: 0.8 }));
+    this.carry.add(cplate);
+    this.carry.position.set(0, 1.0, 0.05);
+    this.carry.visible = false;
+    F.add(this.carry);
+  }
+
+  // 接单一趟：去吧台前取 entry 这道菜，送给 target 座位
+  deliver(entry, target, path) {
+    this.entry = entry;
+    this.target = target;
+    this.path = path;
+    this.state = 'toSill';
+  }
+
+  // 取餐完成：顶盘 → 绕桌间空隙穿到餐桌北侧后巷，从桌子北侧上桌
+  // （桌南站位 z≈-7.0 会被北墙挡住；桌间空隙 x≈-1.15 / 1.3 是唯一的南北通道）
+  pickUp() {
+    const dishX = this.target.dishPos.x;
+    const gapX = dishX < 0 ? -1.15 : 1.3;
+    setPlateDish(this.carry, this.entry && this.entry.name); // 顶盘换成所取菜品
+    this.carry.visible = true;
+    this.path = [
+      { x: gapX, z: -7.6 },
+      { x: gapX, z: BACK_LANE + 0.15 },
+      { x: dishX, z: this.target.z - 0.95 },
+    ];
+    this.state = 'toTable';
+  }
+
+  // 送完（或目标失效弃盘）：沿后巷空手回待命点
+  headBack(post) {
+    this.carry.visible = false;
+    this.entry = null;
+    this.target = null;
+    this.path = [{ x: post.x, z: BACK_LANE }, { x: post.x, z: post.z }];
+    this.state = 'back';
+  }
+
+  _walk(dt) { // 小碎步平移，返回 true 表示已到路径终点
+    if (!this.path.length) return true;
+    const pos = this.group.position;
+    const wp = this.path[0];
+    const dx = wp.x - pos.x, dz = wp.z - pos.z;
+    const dist = Math.hypot(dx, dz);
+    const step = 2.0 * dt; // 比客人略快的小碎步
+    if (dist <= step) { pos.x = wp.x; pos.z = wp.z; this.path.shift(); }
+    else { pos.x += (dx / dist) * step; pos.z += (dz / dist) * step; this.faceY = Math.atan2(dx, dz); }
+    this._walking = true;
+    const s = Math.abs(Math.sin(this.animT * 10));
+    pos.y += (s * 0.05 - pos.y) * Math.min(1, dt * 12);
+    this.body.scale.set(1 + 0.06 * s, 1 - 0.08 * s, 1 + 0.06 * s); // 挤压拉伸
+    this.body.rotation.y += (0 - this.body.rotation.y) * Math.min(1, dt * 6);
+    return false;
+  }
+
+  update(dt) {
+    this.animT += dt;
+    const at = this.animT;
+    const pos = this.group.position;
+    this._walking = false;
+    // 平滑转身
+    let dy = this.faceY - this.group.rotation.y;
+    while (dy > Math.PI) dy -= Math.PI * 2;
+    while (dy < -Math.PI) dy += Math.PI * 2;
+    this.group.rotation.y += dy * Math.min(1, dt * 8);
+    // 眨眼
+    this._blinkT -= dt;
+    if (this._blinkT < 0) this._blinkT = 2 + Math.random() * 3.5;
+    const blinkTarget = this._blinkT < 0.12 ? 0.12 : 1;
+    this.eyeGroup.scale.y += (blinkTarget - this.eyeGroup.scale.y) * Math.min(1, dt * 22);
+
+    let ev = null;
+    switch (this.state) {
+      case 'idle': { // 待命：轻微呼吸 + 东张西望
+        pos.y += (0 - pos.y) * Math.min(1, dt * 8);
+        this.body.scale.y += (1 - this.body.scale.y) * Math.min(1, dt * 8);
+        this.body.scale.x = this.body.scale.z = 1 + Math.sin(at * 2.2) * 0.02;
+        this._glanceT -= dt;
+        if (this._glanceT <= 0) {
+          this._glanceT = 2.5 + Math.random() * 4;
+          this._glanceYaw = (Math.random() - 0.5) * 0.8;
+        }
+        this.body.rotation.y += (this._glanceYaw - this.body.rotation.y) * Math.min(1, dt * 4);
+        break;
+      }
+      case 'toSill':
+        if (this._walk(dt)) {
+          this.state = 'pickup';
+          this._pause = 0.35;
+          this.faceY = Math.atan2(WIN.x - pos.x, WIN.z - pos.z); // 面向传菜窗取餐
+        }
+        break;
+      case 'pickup':
+        this._pause -= dt;
+        if (this._pause <= 0) ev = 'pickupDone';
+        break;
+      case 'toTable':
+        if (this._walk(dt)) {
+          this.state = 'serve';
+          this._pause = 0.4;
+          this.faceY = Math.atan2(this.target.dishPos.x - pos.x, this.target.dishPos.z - pos.z); // 面向桌上餐位
+        }
+        break;
+      case 'serve':
+        this._pause -= dt;
+        if (this._pause <= 0) ev = 'serveDone';
+        break;
+      case 'back':
+        if (this._walk(dt)) {
+          this.state = 'idle';
+          this.faceY = -1.1; // 面向餐桌区待命（三四分之一侧脸对镜头）
+        }
+        break;
+    }
+    // 手臂：端盘时双手举过头顶扶盘，空手走路前后摆臂，待机垂手（统一缓动防突变）
+    let al = 0, ar = 0;
+    if (this.carry.visible) { al = ar = -2.55; }
+    else if (this._walking) { al = Math.sin(at * 10) * 0.5; ar = -al; }
+    this.armL.rotation.x += (al - this.armL.rotation.x) * Math.min(1, dt * 12);
+    this.armR.rotation.x += (ar - this.armR.rotation.x) * Math.min(1, dt * 12);
+    return ev;
+  }
+}
+
 // ---------- 餐厅区 ----------
 export function buildDining(scene, fx) {
   const g = new THREE.Group();
@@ -338,12 +578,12 @@ export function buildDining(scene, fx) {
   const textures = [];
   const rnd = (a, b) => a + Math.random() * (b - a);
 
-  // 木平台（餐厅区地面标识，抬高 0.01 避免与外地面 z-fighting）
+  // 木平台（餐厅区地面标识，南沿伸到吧台脚下，抬高 0.01 避免与外地面 z-fighting）
   const patio = new THREE.Mesh(geo('gPatio', () => new THREE.CircleGeometry(4.7, 28)),
     mat('gPatioWood', 0x7A5638, { roughness: 1 }));
   patio.rotation.x = -Math.PI / 2;
-  patio.scale.set(1.15, 0.66, 1);
-  patio.position.set(0.2, GY + 0.012, -9.4);
+  patio.scale.set(1.15, 0.62, 1);
+  patio.position.set(0.1, GY + 0.012, -7.9);
   patio.receiveShadow = true;
   g.add(patio);
 
@@ -351,6 +591,16 @@ export function buildDining(scene, fx) {
   const glowTex = glowDiscTexture();
   textures.push(glowTex);
   const candleMat = mat('gCandle', PAL.flameCore, { emissive: PAL.flameCore, emissiveIntensity: 1.8, roughness: 0.6 });
+
+  // 贴地暖光池：出餐吧台灯火烘亮整片餐厅露台，把餐厅区从夜色里提出来（与厨房视觉连成一体）
+  const patioGlow = new THREE.Mesh(new THREE.PlaneGeometry(7.5, 4.2),
+    new THREE.MeshBasicMaterial({
+      map: glowTex, color: PAL.lampLight, transparent: true, opacity: 0.4,
+      blending: THREE.AdditiveBlending, depthWrite: false,
+    }));
+  patioGlow.rotation.x = -Math.PI / 2;
+  patioGlow.position.set(0.1, GY + 0.03, -7.5);
+  g.add(patioGlow);
 
   // 餐桌椅 + 蜡烛；座位表（西座/东座面对面；单座桌只摆西座，面向镜头一侧）
   const seats = [];
@@ -402,33 +652,36 @@ export function buildDining(scene, fx) {
       cPost.position.set(sx, GY + 0.15, sz);
       chair.add(cSeat, cBack, cPost);
       g.add(chair);
-      // 桌上餐盘（上菜时显示，客人离席收起）
-      const plate = new THREE.Mesh(geo('gDish', () => new THREE.CylinderGeometry(0.2, 0.17, 0.04, 14)),
-        mat('gPlate', PAL.plate, { roughness: 0.8 }));
-      plate.position.set(seat.dishPos.x, seat.dishPos.y, seat.dishPos.z);
-      plate.visible = false;
-      g.add(plate);
-      seat.plate = plate;
+      // 桌上餐盘（上菜时显示对应菜品，客人离席收起）
+      const plateG = new THREE.Group();
+      plateG.add(new THREE.Mesh(geo('gDish', () => new THREE.CylinderGeometry(0.2, 0.17, 0.04, 14)),
+        mat('gPlate', PAL.plate, { roughness: 0.8 })));
+      plateG.position.set(seat.dishPos.x, seat.dishPos.y, seat.dishPos.z);
+      plateG.visible = false;
+      g.add(plateG);
+      seat.plate = plateG;
       seats.push(seat);
     }
   }
 
-  // 窗台等位菜盘（第一程落点排队展示，第二程起飞后归还池）
+  // 吧台等位菜盘（第一程落点排队展示，第二程起飞后归还池；盘里按队列菜名摆菜）
   const sillPool = [];
   for (let i = 0; i < MAX_SILL; i++) {
-    const p = new THREE.Mesh(geo('gDish', () => new THREE.CylinderGeometry(0.2, 0.17, 0.04, 14)),
-      mat('gPlate', PAL.plate, { roughness: 0.8 }));
-    p.visible = false;
-    g.add(p);
-    sillPool.push(p);
+    const pg = new THREE.Group();
+    pg.add(new THREE.Mesh(geo('gDish', () => new THREE.CylinderGeometry(0.2, 0.17, 0.04, 14)),
+      mat('gPlate', PAL.plate, { roughness: 0.8 })));
+    pg.visible = false;
+    g.add(pg);
+    sillPool.push(pg);
   }
-  // 重排窗台：队列前 MAX_SILL 个各拿一个盘并摆到槽位，其余无盘（溢出仅计数）
+  // 重排吧台：队列前 MAX_SILL 个各拿一个盘并摆到槽位，其余无盘（溢出仅计数）
   function layoutSill() {
     for (const p of sillPool) p.visible = false;
     queue.forEach((e, i) => { e.plate = i < MAX_SILL ? sillPool[i] : null; });
     queue.forEach((e, i) => {
       if (!e.plate) return;
-      e.plate.position.set(WIN.x - 0.75 + i * 0.5, WIN.y + 0.03, WIN.z + 0.05);
+      e.plate.position.set(WIN.x - 0.75 + i * 0.5, SILL.y, SILL.z);
+      setPlateDish(e.plate, e.name); // 盘里摆上对应菜品（同菜名不重建）
       e.plate.visible = true;
     });
   }
@@ -440,6 +693,14 @@ export function buildDining(scene, fx) {
     g.add(guest.group);
     guests.push(guest);
   }
+
+  // 服务员小二：固定待命点在餐厅东侧（视线临界 z≈-7.4 以北会被 3.2 北墙挡住，
+  // 故待命/上桌站位都收在可见区；只有去吧台取餐那一小段没入墙后，从吧台取餐再端着盘子走回来）
+  const POST = { x: 3.7, z: -8.5 };       // 待命点（餐厅东侧空地，不挡客人动线）
+  const SILL_FRONT = SILL.z - 0.68;       // 吧台前取餐站位进深
+  const waiter = new Waiter(fx);
+  waiter.group.position.set(POST.x, 0, POST.z);
+  g.add(waiter.group);
 
   let dim = 1;
   let now = 0;
@@ -476,6 +737,12 @@ export function buildDining(scene, fx) {
     ];
   }
 
+  // 用餐时长 8.5–15 秒：逐桌逐餐确定性（同一座位第 N 餐时长稳定，节奏可预期又带差异）
+  function eatDuration(seat) {
+    seat._mealN = (seat._mealN || 0) + 1;
+    return 8.5 + ((seat._mealN * 5 + Math.round((seat.x + 3) * 4) + Math.round(-seat.z)) % 7);
+  }
+
   function freeSeat(guest, t, happy) {
     const seat = guest.seat;
     if (!seat) return;
@@ -488,7 +755,7 @@ export function buildDining(scene, fx) {
   return {
     group: g,
 
-    // 出餐接力：菜先落在窗台（第一程 1.1s），再排队等上桌
+    // 出餐接力：菜先落在出餐吧台（第一程 1.1s），再排队等上桌
     serveDish(name) {
       if (queue.length >= MAX_QUEUE) return;
       queue.push({ name: name || '招牌菜', readyAt: now + 1.15, plate: null });
@@ -503,7 +770,7 @@ export function buildDining(scene, fx) {
         if (gst.state === 'seated' || gst.state === 'served') seated++;
         if (gst.state === 'eating') eating++;
       }
-      return { seated, eating, queue: queue.length };
+      return { seated, eating, queue: queue.length, waiter: waiter.state };
     },
 
     update(dt, t) {
@@ -512,6 +779,7 @@ export function buildDining(scene, fx) {
       const dimK = 0.2 + 0.8 * dim;
       candleMat.emissiveIntensity = 1.8 * dimK * (1 + 0.18 * Math.sin(t * 9.3) + 0.1 * Math.sin(t * 15.7));
       for (const tb of TABLES) tb._halo.material.opacity = 0.32 * dimK * (1 + 0.15 * Math.sin(t * 9.3 + tb.x));
+      patioGlow.material.opacity = 0.4 * dimK; // 歇业时光池同步收敛
 
       // 新客人入场（歇业时不迎客）
       if (dim >= 1) {
@@ -524,33 +792,41 @@ export function buildDining(scene, fx) {
         }
       }
 
-      // 窗台队列 → 等菜最久的客人上桌（第二程飞行）
-      if (queue.length && queue[0].readyAt <= t) {
+      // 吧台队列 → 派单给服务员（一次端一盘，送完再接下一单；歇业不接新单，手上的送完）
+      if (waiter.state === 'idle' && dim >= 1 && queue.length && queue[0].readyAt <= t) {
         let target = null;
         for (const seat of seats) {
           if (!seat.guest || seat.guest.state !== 'seated') continue;
           if (!target || seat._waitSince < target._waitSince) target = seat;
         }
         if (target) {
-          const entry = queue.shift();
-          const from = entry.plate
-            ? new THREE.Vector3(entry.plate.position.x, entry.plate.position.y, entry.plate.position.z)
-            : new THREE.Vector3(WIN.x, WIN.y + 0.03, WIN.z + 0.05);
-          layoutSill(); // 剩余等位盘往前挪
-          fx.dishServed(from, { x: target.dishPos.x, y: target.dishPos.y, z: target.dishPos.z }, entry.name);
-          target.guest.state = 'served';
-          target._serveAt = t;
+          const entry = queue[0]; // 先不出队：盘子留在吧台上等小二走到跟前
+          target.guest.state = 'served'; // 已有小二接单，别再派给别人
+          waiter.deliver(entry, target,
+            [{ x: 4.2, z: -7.2 }, { x: entry.plate ? entry.plate.position.x : WIN.x, z: SILL_FRONT }]);
         }
+      }
+
+      // 服务员事件：取到餐 → 顶盘送去目标桌；放菜上桌 → 客人开吃、小二空手回待命点
+      const wr = waiter.update(dt);
+      if (wr === 'pickupDone') {
+        const qi = queue.indexOf(waiter.entry);
+        if (qi >= 0) queue.splice(qi, 1);
+        layoutSill(); // 吧台剩余等位盘往前挪
+        waiter.pickUp();
+      } else if (wr === 'serveDone') {
+        const seat = waiter.target;
+        if (seat && seat.guest && seat.guest.state === 'served') { // 客人还在等：摆盘开吃
+          setPlateDish(seat.plate, waiter.entry && waiter.entry.name); // 桌上餐盘摆出对应菜品
+          seat.plate.visible = true;
+          seat.guest.beginEat(t, eatDuration(seat));
+        }
+        waiter.headBack(POST);
       }
 
       // 客人状态推进
       for (const guest of guests) {
         if (guest.state === 'idle') continue;
-        // 第二程菜落地（飞行 1.1s）→ 摆盘开吃
-        if (guest.state === 'served' && guest.seat && t - guest.seat._serveAt >= 1.1) {
-          guest.seat.plate.visible = true;
-          guest.beginEat(t, rnd(7, 12));
-        }
         // 等菜耐心
         if (guest.state === 'seated' && guest.seat) {
           if (guest.seat._waitSince == null) guest.seat._waitSince = t;
@@ -571,8 +847,6 @@ export function buildDining(scene, fx) {
           }
         } else if (r === 'finished') {
           guest.finishMeal();
-          fx.popup(PRAISE[(Math.random() * PRAISE.length) | 0],
-            new THREE.Vector3(guest.group.position.x, 1.25, guest.group.position.z), '#6FA34E');
         } else if (r === 'leave') {
           freeSeat(guest, t, true);
           guest.leave(walkPathOut(guest));
@@ -583,6 +857,7 @@ export function buildDining(scene, fx) {
     dispose() {
       scene.remove(g);
       g.traverse((o) => {
+        if (o.userData.sharedDish) return; // 盘中餐共享资产由 disposeDishCache 统一清理
         if (o.geometry) o.geometry.dispose();
         if (o.material) {
           const mats = Array.isArray(o.material) ? o.material : [o.material];
@@ -592,6 +867,7 @@ export function buildDining(scene, fx) {
       for (const tx of textures) tx.dispose();
       for (const k in GEO) { GEO[k].dispose(); delete GEO[k]; }
       for (const k in MAT) { MAT[k].dispose(); delete MAT[k]; }
+      disposeDishCache(); // 盘中餐共享几何/材质
     },
   };
 }

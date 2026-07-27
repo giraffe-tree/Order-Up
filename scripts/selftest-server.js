@@ -7,6 +7,10 @@ import os from 'node:os';
 import path from 'node:path';
 import { startServer } from '../server/index.js';
 import { CHEF_NAMES, chefNameIndex } from '../server/chef-names.js';
+import { DISHES, pickDish } from '../web/js3d/dishes.js';
+
+// 菜品池菜名集合（dish.name 新契约：来自 24 道菜品池，任务摘要挪到 dish.task）
+const POOL_NAMES = new Set(DISHES.map((d) => d.name));
 
 let passed = 0;
 let failed = 0;
@@ -224,15 +228,18 @@ async function main() {
     const r2 = await get(port1, '/api/snapshot');
     ok(r2.status === 200 && JSON.parse(r2.body).kitchens.length === 2, '灌入垃圾数据后服务仍正常响应');
 
-    console.log('▶ 用例 2b：出餐语义（菜名剥离 markdown / 跳过 JSON 行）');
-    // 加粗标题 → 菜名应剥离 ** ；纯 JSON 输出 → 应走线程标题/厨房名兜底
+    console.log('▶ 用例 2b：出餐语义（任务摘要剥离 markdown / 跳过 JSON 行；菜名来自菜品池）');
+    // 加粗标题 → 任务摘要应剥离 ** 存进 dish.task；dish.name 由 pickDish(摘要@厨房) 确定性挑选
     await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '**修好断线重连**\n细节略' }, 45) + '\n');
     const dish1 = await sse.waitFor((e) => e.type === 'dish_served', 9000, 'dish_served(加粗标题)').catch(() => null);
-    ok(dish1 && dish1.dish.name === '修好断线重连', `菜名剥离 markdown 加粗（实际 ${dish1?.dish.name}）`);
+    ok(dish1 && dish1.dish.task === '修好断线重连', `任务摘要剥离 markdown 加粗存入 dish.task（实际 ${dish1?.dish.task}）`);
+    ok(dish1 && POOL_NAMES.has(dish1.dish.name) && dish1.dish.name === pickDish('修好断线重连@t:parent-1').name,
+      `菜名来自菜品池且按任务确定性挑选（实际 ${dish1?.dish.name}）`);
     await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '{"outcome":"allow"}' }, 46) + '\n');
     const dish2 = await sse.waitFor((e) => e.type === 'dish_served' && e.dish.ts > dish1.dish.ts, 9000, 'dish_served(JSON 兜底)').catch(() => null);
-    ok(dish2 && !dish2.dish.name.startsWith('{') && !dish2.dish.name.startsWith('```') && dish2.dish.name.length >= 2,
-      `JSON 输出的菜名走兜底而非裸露 JSON（实际 ${dish2?.dish.name}）`);
+    ok(dish2 && !dish2.dish.task.startsWith('{') && !dish2.dish.task.startsWith('```') && dish2.dish.task.length >= 2
+      && POOL_NAMES.has(dish2.dish.name),
+      `JSON 输出的任务摘要走兜底而非裸露 JSON，菜名仍是池内菜（实际 ${dish2?.dish.name} · ${dish2?.dish.task}）`);
 
     console.log('▶ 用例 2c：session_index 迟到后厨房改用会话标题');
     // 标题索引放在 sessions 目录旁（与 watcher 的 resolve 规则一致）
@@ -252,10 +259,12 @@ async function main() {
     // 厨房改用会话标题后，厨师名保持 hash 分配的池名，绝不跟随标题变化
     ok(renamed && renamed.k1.chefs.every((c) => CHEF_NAMES.includes(c.name) && c.name !== '快照接口开发'),
       '厨房改名后厨师名不跟随会话标题（仍是厨师池名字）');
-    // 兜底菜名此时应取线程标题
+    // 兜底任务摘要此时应取线程标题
     await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '' }, 47) + '\n');
     const dish3 = await sse.waitFor((e) => e.type === 'dish_served' && e.dish.ts > dish2.dish.ts, 9000, 'dish_served(空消息兜底)').catch(() => null);
-    ok(dish3 && dish3.dish.name === '快照接口开发', `空消息时菜名兜底为线程标题（实际 ${dish3?.dish.name}）`);
+    ok(dish3 && dish3.dish.task === '快照接口开发'
+      && dish3.dish.name === pickDish('快照接口开发@t:parent-1').name,
+      `空消息时任务摘要兜底为线程标题，菜名确定性匹配（实际 ${dish3?.dish.name} · ${dish3?.dish.task}）`);
     sse.close();
 
     console.log('▶ 用例 2d：懒加载（启动只回放最近 2 会话 × 尾部 3 行；占位厨房按需加载）');

@@ -63,12 +63,16 @@ export class KitchenRenderer {
     // 厨房外氛围背景（黄昏穹顶 / 栅栏 / 路灯 / 远景剪影 / 萤火虫）：
     // scene 级一次性构建，不随 setKitchen 重建
     this.backdrop = buildBackdrop(this.scene);
+    // 远景雾：比 backdrop 默认（46~100）收紧，让厨房外圈随距离自然压暗；
+    // 餐厅区（距相机约 27 单位）仍在雾起点之内，保持清晰
+    this.scene.fog = new THREE.Fog(0x3E2B1C, 27, 58);
     this.camera = new THREE.PerspectiveCamera(40, 1, 0.1, 120);
 
     // --- 灯光：暖色半球光 + 方向光（开阴影）；吊灯/火把点光由 decor 提供并闪烁 ---
     this.hemi = new THREE.HemisphereLight(PAL.warmLight, 0x8A6F52, 1.3);
     this.scene.add(this.hemi);
-    this.dir = new THREE.DirectionalLight(0xFFF1D6, 1.85);
+    // 主光色温按美术基准取暖色 #FFE0B3（PAL.warmLight），从东南上方斜照
+    this.dir = new THREE.DirectionalLight(PAL.warmLight, 1.85);
     this.dir.position.set(6, 11, 5);
     this.dir.castShadow = true;
     this.dir.shadow.mapSize.set(2048, 2048);
@@ -76,18 +80,22 @@ export class KitchenRenderer {
     this.dir.shadow.camera.top = 10; this.dir.shadow.camera.bottom = -10;
     this.dir.shadow.camera.far = 40;
     this.dir.shadow.bias = -0.0006;
+    this.dir.shadow.normalBias = 0.03; // 盒体低多边形：压掉 flat 面上的阴影条纹
     this.scene.add(this.dir);
 
     this.fx = new FX(this.scene);
 
     // --- 摄像机轨道状态：透视 FOV40、俯仰 60°、正北方位、厨房居中 ---
     this.view = {
-      az: 0,                 // 方位角（0=正北看向南，拖拽 ±40°）
-      pitch: 60 * DEG,       // 俯仰（45°~70°）
+      az: 0,                 // 方位角（0=正北看向南，360° 连续自由环绕、不限位）
+      pitch: 60 * DEG,       // 俯仰（30°~80°）
       fitDist: 18,
       zoomK: 1,              // 滚轮缩放系数
-      target: new THREE.Vector3(0, 0.3, -0.4), // 目标略偏北 → 厨房在画面略偏下
+      target: new THREE.Vector3(0, 0.3, -0.4), // z 由 _fitCamera 按俯仰角重算（偏北 → 厨房略偏下、餐厅入画）
     };
+    // 挡视线墙体消隐状态：各侧墙当前不透明度（1=不透明）；材质列表在 setKitchen 时收集
+    this._wallMats = null;
+    this._wallFade = { n: 1, s: 1, e: 1, w: 1 };
     this.lastInteract = -10;
     this._bindInput();
 
@@ -121,6 +129,8 @@ export class KitchenRenderer {
 
     this.kitchenData = kitchen || { id: 'k', name: '厨房', active: true };
     this.built = buildKitchen(this.scene);
+    this._wallMats = this.built.wallFadeMats || null; // 各侧墙的可淡出材质（共享材质的独立克隆）
+    this._wallFade = { n: 1, s: 1, e: 1, w: 1 };      // 新墙一律从不透明开始，再由消隐逻辑平滑过渡
     this.decor = buildDecor(this.scene, { wallN: -(GH - 1) / 2 - 0.66 });
     this.dining = buildDining(this.scene, this.fx); // 北墙外餐厅区（出餐第二程接力）
     this._indexStations();
@@ -439,11 +449,13 @@ export class KitchenRenderer {
       this.hemi.intensity = 1.3;
       this.dir.intensity = 1.85;
       this.renderer.setClearColor(PAL.groundOut);
+      if (this.scene.fog) this.scene.fog.color.set(0x3E2B1C);
     } else {
       // 歇业：整体压暗
       this.hemi.intensity = 0.28;
       this.dir.intensity = 0.45;
       this.renderer.setClearColor(0x1E1510);
+      if (this.scene.fog) this.scene.fog.color.set(0x1E1510); // 雾色跟随背景，外圈融入夜色
     }
     if (this.decor) this.decor.setDim(active ? 1 : 0.12); // 吊灯/火把同步压暗
     if (this.backdrop) this.backdrop.setDim(active ? 1 : 0.35); // 背景氛围同步收敛（略留夜色活气）
@@ -747,13 +759,23 @@ export class KitchenRenderer {
   // ============ 内部：摄像机 ============
 
   _fitCamera() {
-    // 把 12×9 厨房（含 3.2 高北墙与挂饰）装进视口：取宽高两个约束的较大距离
-    const halfW = (GW + 2.2) / 2;
-    const halfH = ((GH + 2.4) / 2) * Math.sin(this.view.pitch) + 2.1;
-    const vFov = this.camera.fov * DEG;
-    const dV = halfH / Math.tan(vFov / 2);
-    const dH = halfW / (Math.tan(vFov / 2) * this.camera.aspect);
-    this.view.fitDist = Math.max(dV, dH) * 1.04;
+    // 取景范围：南墙外门牌（z≈+5.3）到北墙外餐厅区远端客桌（z≈-10.6，含客人身高）。
+    // 顶部预留约 12% 屏幕高度给订单 HUD（内容顶边压到 NDC +0.76），底部留少量边距；
+    // 上下约束联立解出观察目标 z 与距离——目标偏北，厨房因此略偏下居中、
+    // 餐厅区在默认视角里自然入画，出餐口不再把厨房与客人隔出画面。
+    const s = Math.sin(this.view.pitch), c = Math.cos(this.view.pitch);
+    const tanH = Math.tan(this.camera.fov * DEG / 2);
+    const Z_MIN = -10.6, Z_MAX = 6.2; // 取景北/南边界（餐厅远端 ~ 南墙外立面与门口台阶）
+    const H_N = 1.2;                  // 北边界计入客人身高
+    const TOP = 0.76, BOTTOM = 0.96;  // 内容允许触达的 NDC 上/下限
+    // 视竖直方向上，地面点 z 的投影偏移 = (zT - z)·s，高度 y 的偏移 = y·c
+    const k1 = H_N * c - Z_MIN * s, k2 = Z_MAX * s;
+    const zT = (TOP * k2 - BOTTOM * k1) / ((TOP + BOTTOM) * s);
+    const dV = (k1 + s * zT) / (TOP * tanH);
+    // 横向约束：厨房宽 + 两侧余量（窄屏时由横向主导，纵向内容相应裁掉远端）
+    const dH = ((GW + 2.2) / 2) / (tanH * this.camera.aspect);
+    this.view.target.z = zT;
+    this.view.fitDist = Math.max(dV, dH) * 1.03;
   }
 
   _updateCamera(t) {
@@ -763,7 +785,7 @@ export class KitchenRenderer {
     const azB = idle ? Math.sin(t * 0.35) * 0.012 : 0;
     const piB = idle ? Math.sin(t * 0.27 + 1) * 0.006 : 0;
     const az = v.az + azB;
-    const pitch = Math.max(45 * DEG, Math.min(70 * DEG, v.pitch + piB));
+    const pitch = Math.max(30 * DEG, Math.min(80 * DEG, v.pitch + piB));
     const dist = v.fitDist * v.zoomK;
     const tgt = v.target;
     this.camera.position.set(
@@ -772,6 +794,39 @@ export class KitchenRenderer {
       tgt.z + dist * Math.cos(pitch) * Math.cos(az),
     );
     this.camera.lookAt(tgt);
+  }
+
+  // 挡视线墙体自动消隐：相机转到哪侧，哪侧的墙平滑淡出（转回淡入）。
+  // 判定：相机方位角与该侧墙方位夹角 <50° 开始淡、<30° 淡到最浅；
+  // 南墙是默认相机所在的「正面」（1.5 矮墙带门，俯视范围内不挡内部），永不淡出。
+  _updateWallFade(dt) {
+    const mats = this._wallMats;
+    if (!mats) return;
+    const SIDE_AZ = { s: 0, e: Math.PI / 2, n: Math.PI, w: -Math.PI / 2 }; // 与 view.az 同定义（0=相机在南）
+    const MIN_OP = { n: 0.18, e: 0.18, w: 0.18, s: 1 }; // 淡出后残影透明度（s=1 → 不淡）
+    for (const side of ['n', 's', 'e', 'w']) {
+      const list = mats[side];
+      if (!list || !list.length) continue;
+      let d = Math.abs(this.view.az - SIDE_AZ[side]) % (Math.PI * 2);
+      if (d > Math.PI) d = Math.PI * 2 - d;
+      const k = Math.max(0, Math.min(1, (50 * DEG - d) / (20 * DEG)));
+      const target = 1 - k * (1 - MIN_OP[side]);
+      const cur = this._wallFade[side];
+      if (cur === target) continue;
+      const next = Math.abs(target - cur) < 0.004 ? target : cur + (target - cur) * Math.min(1, dt * 7);
+      this._wallFade[side] = next;
+      const opaque = next > 0.999;
+      for (const m of list) {
+        if (m.userData.wallBaseT === undefined) m.userData.wallBaseT = m.transparent; // 记住材质原生透明标记
+        m.opacity = opaque ? 1 : next;
+        m.transparent = m.userData.wallBaseT || !opaque;
+        if (!m.userData.wallBaseT) {
+          m.depthWrite = opaque; // 淡出时关深度写入，恢复时还原
+          // transparent 切换必须 needsUpdate 刷新渲染状态，否则仍按不透明程序绘制
+          if (m.userData.wallOpaque !== opaque) { m.needsUpdate = true; m.userData.wallOpaque = opaque; }
+        }
+      }
+    }
   }
 
   _bindInput() {
@@ -786,9 +841,9 @@ export class KitchenRenderer {
       if (!this._drag) return;
       const dx = e.clientX - this._drag.x;
       const dy = e.clientY - this._drag.y;
-      // 有限范围环绕：方位 ±40°、俯仰 45°-70°
-      this.view.az = Math.max(-40 * DEG, Math.min(40 * DEG, this._drag.az - dx * 0.005));
-      this.view.pitch = Math.max(45 * DEG, Math.min(70 * DEG, this._drag.pitch + dy * 0.004));
+      // 360° 连续自由环绕：方位不限位（可无限绕圈）、俯仰 30°-80°（不穿地、不翻到场景下方）
+      this.view.az = this._drag.az - dx * 0.005;
+      this.view.pitch = Math.max(30 * DEG, Math.min(80 * DEG, this._drag.pitch + dy * 0.004));
       this._fitCamera();
       this.lastInteract = this.clock.elapsedTime;
     };
@@ -881,5 +936,6 @@ export class KitchenRenderer {
     if (this.backdrop) this.backdrop.update(t); // 萤火虫漂移 / 路灯光晕呼吸
     if (this.dining) this.dining.update(dt, this._simT); // 餐厅区：客人入场/用餐/离席、窗台排队上菜
     this._updateCamera(t);
+    this._updateWallFade(dt); // 挡视线墙体按相机方位淡出/淡入
   }
 }

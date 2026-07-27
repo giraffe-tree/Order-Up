@@ -11,9 +11,9 @@
   <h1>Codex Overcooked 🍳</h1>
   <span id="conn" class="conn">连接中…</span>
   <div class="stats">
-    <span class="stat">🏠 活跃厨房 <b id="stat-active">0</b>/<b id="stat-kitchens">0</b></span>
-    <span class="stat">👨‍🍳 厨师 <b id="stat-chefs">0</b></span>
-    <span class="stat">🍽 已出餐 <b id="stat-served">0</b></span>
+    <span class="stat"><span class="stat-ico" aria-hidden="true">🏠</span>活跃厨房 <b id="stat-active">0</b>/<b id="stat-kitchens">0</b></span>
+    <span class="stat"><span class="stat-ico" aria-hidden="true">👨‍🍳</span>厨师 <b id="stat-chefs">0</b></span>
+    <span class="stat"><span class="stat-ico" aria-hidden="true">🍽</span>已出餐 <b id="stat-served">0</b></span>
   </div>
   <button id="btn-sound" class="top-btn" type="button" title="音效开关" hidden>🔊</button>
   <button id="btn-help" class="top-btn" type="button" title="玩法说明（这是什么？）">?</button>
@@ -32,18 +32,23 @@
   <section id="stage" class="stage">
     <div id="stage-empty" class="stage-empty">
       <div class="empty-card">
-        <div class="empty-scene" aria-hidden="true">
-          <span class="empty-chef">👨‍🍳</span>
-          <span class="empty-pot">🍳</span>
-          <span class="empty-z">💤</span>
+        <div class="empty-bar" role="img" aria-label="正在等待 codex 会话接入">
+          <div class="empty-bar-track">
+            <div class="empty-bar-fill">
+              <span class="empty-bar-flame" aria-hidden="true">🔥</span>
+            </div>
+          </div>
         </div>
         <h2>厨房还没开火</h2>
-        <p>在任意项目里启动一个 <b>codex</b> 会话，这里就会亮起一间厨房：</p>
-        <code class="empty-cmd">codex</code>
-        <p class="empty-or">—— 或者先尝尝演示模式 ——</p>
-        <div class="empty-actions">
-          <code class="empty-cmd">node bin/codex-kitchen.js --demo</code>
-          <code class="empty-cmd">http://localhost:4848/?mock=1</code>
+        <p class="empty-sub">正在生火备菜<span class="empty-dots" aria-hidden="true"><i>.</i><i>.</i><i>.</i></span></p>
+        <div class="empty-foot">
+          <p>在任意项目里启动一个 <b>codex</b> 会话，这里就会亮起一间厨房：</p>
+          <code class="empty-cmd">codex</code>
+          <p class="empty-or">—— 或者先尝尝演示模式 ——</p>
+          <div class="empty-actions">
+            <code class="empty-cmd">node bin/codex-kitchen.js --demo</code>
+            <code class="empty-cmd">http://localhost:4848/?mock=1</code>
+          </div>
         </div>
       </div>
     </div>
@@ -68,6 +73,8 @@
     <ul id="feed" class="feed"></ul>
   </aside>
 </main>
+
+<div id="toast-stack" class="toast-stack" aria-live="polite"></div>
 
 <div id="guide-overlay" class="guide-overlay" hidden>
   <div class="guide-card" role="dialog" aria-modal="true" aria-labelledby="guide-title">
@@ -96,6 +103,33 @@
   </div>
 </div>
 
+<script>
+/* 轻提示 toast + 截图调试辅助（须在 main.js 之前执行）：
+   window.COToast(msg, kind) 供事件层弹票卡式轻提示（kind: serve/burn/info，默认 info）；
+   ?noguide=1 预置「已看过引导」跳过首次浮层；?toast-demo=1 弹出 3 条样例（截图用）。 */
+(function () {
+  var q = new URLSearchParams(location.search);
+  try { if (q.has('noguide')) localStorage.setItem('co-guide-seen', '1'); } catch (_) {}
+  window.COToast = function (msg, kind) {
+    var stack = document.getElementById('toast-stack');
+    if (!stack) return;
+    var t = document.createElement('div');
+    t.className = 'toast toast-' + (kind || 'info');
+    t.textContent = msg;
+    stack.appendChild(t);
+    while (stack.children.length > 4) stack.removeChild(stack.firstChild);
+    setTimeout(function () { t.classList.add('out'); }, 2600);
+    setTimeout(function () { if (t.parentNode) t.parentNode.removeChild(t); }, 3000);
+  };
+  if (q.has('toast-demo')) {
+    window.addEventListener('load', function () {
+      window.COToast('✅ 出餐 +1 · 香喷喷补丁', 'serve');
+      setTimeout(function () { window.COToast('💥 糊了 · 命令退出码 1', 'burn'); }, 250);
+      setTimeout(function () { window.COToast('📡 已连接，厨房开张！', 'info'); }, 500);
+    });
+  }
+})();
+</script>
 <script src="js/store.js"></script>
 <script src="js/mock.js"></script>
 <script src="js/net.js"></script>

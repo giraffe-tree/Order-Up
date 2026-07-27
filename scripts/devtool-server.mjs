@@ -1,5 +1,5 @@
 // devtool-server.mjs — js3d 自测/截图/perf 专用静态服务器（dev-only，不参与产品运行）
-// 用法：node web/js3d/devtool-server.mjs [port]
+// 用法：node scripts/devtool-server.mjs [port]
 //   - 静态托管 web/ 目录（ES module 需要 http 协议，file:// 会被 CORS 拦）
 //   - GET /__perf?avg=8.2&frames=300 → 把结果写入 web/js3d/.perf-result.txt 并打印 PERF_RESULT
 //     （?perf=1&report=1 模式下 test.html 跑完 300 帧后上报；供无头 Chrome 真实时间测帧耗时）
@@ -9,7 +9,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const WEB = path.resolve(HERE, '..');
+const WEB = path.resolve(HERE, '..', 'web');
 const RESULT_FILE = path.join(HERE, '.perf-result.txt');
 const MIME = {
   '.html': 'text/html; charset=utf-8',

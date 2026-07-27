@@ -23,6 +23,11 @@
     { kind: 'exec',   label: '开火上灶',   detail: 'npm test -- --watch=false' }
   ];
 
+  /* 菜品池（web/js3d/dishes.js，ES module）：异步加载，就绪后 dish_served 按任务确定性挑菜；
+     未就绪时退回兜底名。路径相对文档根（本文件以经典 script 引入，无法用静态 import） */
+  var dishPool = null;
+  import('../js3d/dishes.js').then(function (m) { dishPool = m; }).catch(function () {});
+
   var DISH_NAMES = ['香喷喷补丁', '回锅重构', '红烧单测', '清蒸文档', '干煸依赖'];
 
   function connect(handlers) {
@@ -103,10 +108,11 @@
       });
       if (step.kind === 'serve') {
         later(function () {
-          handlers.onEvent({
-            type: 'dish_served', kitchenId: kid,
-            dish: { name: DISH_NAMES[dishIdx++ % DISH_NAMES.length], by: pick[1], ts: Date.now() }
-          });
+          // 菜名从菜品池取：seed 带流水号，每次出餐菜品各不相同；dish.task 保留任务摘要
+          var d = dishPool ? dishPool.pickDish(step.detail + '@' + kid + '#' + dishIdx) : null;
+          var dish = { name: d ? d.name : DISH_NAMES[dishIdx % DISH_NAMES.length], task: step.detail, by: pick[1], ts: Date.now() };
+          dishIdx++;
+          handlers.onEvent({ type: 'dish_served', kitchenId: kid, dish: dish });
         }, 450);
       }
       later(tick, 650 + Math.random() * 750);
