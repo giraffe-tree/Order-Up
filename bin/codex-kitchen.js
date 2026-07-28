@@ -21,7 +21,7 @@ function parseArgs(argv) {
     else if (a === '--replay-lines') opts.replayLines = Math.max(0, parseInt(argv[++i], 10) || 0);
     else if (a.startsWith('--replay-lines=')) opts.replayLines = Math.max(0, parseInt(a.slice(15), 10) || 0);
     else if (a === '--help' || a === '-h') {
-      console.log(`用法：codex-kitchen [选项]
+      console.log(`用法：order-up-now [选项]
 
 选项：
   --port <n>             监听端口（默认 4848，被占用时自动自增）

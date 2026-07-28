@@ -1,11 +1,24 @@
 {
-  "name": "codex-kitchen",
+  "name": "order-up-now",
   "version": "0.1.0",
   "description": "把本机 Codex CLI 会话实时可视化成胡闹厨房",
   "type": "module",
   "bin": {
-    "codex-kitchen": "bin/codex-kitchen.js"
+    "order-up-now": "bin/codex-kitchen.js"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/giraffe-tree/Order-Up.git"
+  },
+  "homepage": "https://github.com/giraffe-tree/Order-Up#readme",
+  "bugs": "https://github.com/giraffe-tree/Order-Up/issues",
+  "keywords": [
+    "codex",
+    "cli",
+    "visualization",
+    "overcooked",
+    "game"
+  ],
   "engines": {
     "node": ">=18"
   },

@@ -113,13 +113,11 @@ curl -fsSL <your-repo-url>/install.sh | sh
 > 使用前请把 `<your-repo-url>` 替换为实际 git 仓库地址（或先设置环境变量 `CODEX_KITCHEN_REPO`）。
 > 脚本会把仓库克隆到 `~/.codex-kitchen` 并执行 `npm link`，之后可直接使用 `codex-kitchen` 命令。
 
-### 方式四：npx（发布后）
+### 方式四：npx（已发布）
 
 ```sh
-npx codex-kitchen
+npx order-up-now
 ```
-
-> ⚠️ 这是发布后的目标用法，需要先把包 `npm publish` 到 npm registry。当前包尚未发布，请先用上面的本地方式。
 
 ### 方式五：一键重启脚本（清理旧实例）
 
@@ -169,7 +167,7 @@ npm run restart -- --port 4900   # 等价 npm 入口，参数原样透传
 - [ ] Claude Code 数据源适配
 - [ ] Kimi CLI 数据源适配
 - [ ] 多数据源同屏：所有 AI 厨师在同一间厨房出餐
-- [ ] npm 发布（`npx` 一键开火）
+- [x] npm 发布（`npx order-up-now` 一键开火）
 
 ## 隐私说明
 
