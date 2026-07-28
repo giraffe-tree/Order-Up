@@ -21,6 +21,26 @@
 - ✅ **自带自测**：`npm test` 44 项断言（回放 / 懒加载 / SSE / demo / 健壮性），前端另有切换系统脚本化自测
 - 🗺️ **路线图**：当前支持 Codex CLI，计划适配 Claude Code 与 Kimi CLI——所有 AI 厨师在同一间厨房出餐
 
+## 快速开始
+
+要求 Node.js ≥ 18。
+
+方式一：npx 一键开火（已发布）
+
+```sh
+npx order-up-now
+```
+
+方式二：本地直接跑
+
+```sh
+git clone <this-repo>
+cd Order-Up
+node bin/codex-kitchen.js
+```
+
+启动后自动打开浏览器（默认 http://localhost:4848/），然后你用 agent 干活，厨房里就有厨师开始跑堂了。
+
 ## 玩法说明：事件 → 厨师动作
 
 | agent 事件 | 厨师动作 | 工位 |
@@ -84,49 +104,6 @@
 - **轻提示**：出餐 ✅、糊了 💥、断线重连 📡 时底部弹出票卡式 toast（3 秒自动退场，最多叠 4 条）。
 - **首次引导浮层**：第一次打开自动弹出玩法说明（厨师动作对照表 + 快捷键），点「开始围观 🍽」或 `Esc` 关闭并记忆（localStorage）；之后随时点顶栏 `?` 按钮或按 `?` 键重看。
 - **空态进度条**：还没有任何厨房时，舞台中央显示游戏风进度条（木框 + 金橙填充 + 🔥 火苗循环扫过）和「正在生火备菜…」，下方给出启动 codex 会话与演示模式两种入口。
-
-## 快速开始
-
-要求 Node.js ≥ 18。
-
-### 方式一：本地直接跑（现在就能用）
-
-```sh
-git clone <this-repo>
-cd Order-Up
-node bin/codex-kitchen.js
-```
-
-### 方式二：npm link 后全局使用
-
-```sh
-npm link
-codex-kitchen
-```
-
-### 方式三：一键安装脚本
-
-```sh
-curl -fsSL <your-repo-url>/install.sh | sh
-```
-
-> 使用前请把 `<your-repo-url>` 替换为实际 git 仓库地址（或先设置环境变量 `CODEX_KITCHEN_REPO`）。
-> 脚本会把仓库克隆到 `~/.codex-kitchen` 并执行 `npm link`，之后可直接使用 `codex-kitchen` 命令。
-
-### 方式四：npx（已发布）
-
-```sh
-npx order-up-now
-```
-
-### 方式五：一键重启脚本（清理旧实例）
-
-```sh
-./start.sh --demo        # 杀掉所有正在运行的 codex-kitchen 进程，再重新启动
-npm run restart -- --port 4900   # 等价 npm 入口，参数原样透传
-```
-
-启动后自动打开浏览器（默认 http://localhost:4848/），然后你用 agent 干活，厨房里就有厨师开始跑堂了。
 
 ## CLI 参数
 

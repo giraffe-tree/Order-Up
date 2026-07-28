@@ -1,18 +1,14 @@
 #!/bin/sh
-# codex-kitchen 一键安装脚本
-# 用法: curl -fsSL <your-repo-url>/install.sh | sh
+# Order Up! 一键安装脚本（从源码安装）
+# 用法: curl -fsSL https://raw.githubusercontent.com/giraffe-tree/Order-Up/main/install.sh | sh
+# 如果只想直接用，不必安装：npx order-up-now
 # 可用环境变量覆盖:
-#   CODEX_KITCHEN_REPO  git 仓库地址（默认下方占位符，请替换）
+#   CODEX_KITCHEN_REPO  git 仓库地址（默认本仓库）
 #   CODEX_KITCHEN_HOME  安装目录（默认 ~/.codex-kitchen）
 set -e
 
-REPO_URL="${CODEX_KITCHEN_REPO:-<your-repo-url>}"
+REPO_URL="${CODEX_KITCHEN_REPO:-https://github.com/giraffe-tree/Order-Up.git}"
 INSTALL_DIR="${CODEX_KITCHEN_HOME:-$HOME/.codex-kitchen}"
-
-if [ "$REPO_URL" = "<your-repo-url>" ]; then
-  echo "❌ 请先设置仓库地址：CODEX_KITCHEN_REPO=<git-url> 或编辑本脚本中的占位符。"
-  exit 1
-fi
 
 for cmd in git node npm; do
   if ! command -v "$cmd" >/dev/null 2>&1; then
@@ -47,5 +43,6 @@ npm link
 
 echo ""
 echo "✅ 安装完成！直接运行："
-echo "   codex-kitchen          # 真实会话模式"
-echo "   codex-kitchen --demo   # 演示模式"
+echo "   order-up-now          # 真实会话模式"
+echo "   order-up-now --demo   # 演示模式"
+echo "   （也可以不安装，直接 npx order-up-now）"

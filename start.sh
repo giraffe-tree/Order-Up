@@ -15,11 +15,12 @@ for arg in "$@"; do
   fi
 done
 
-# 精确匹配两种进程形态（正则匹配完整命令行）：
+# 精确匹配三种进程形态（正则匹配完整命令行）：
 #   node bin/codex-kitchen.js ...        （仓库内直接跑 / npm start）
 #   node /path/to/.../bin/codex-kitchen  （npm link 后的全局命令，bin 软链到 js 入口）
+#   node /path/to/.../order-up-now       （npm 全局安装 / npx 运行，bin 名为 order-up-now）
 # 命令必须是 node 开头，避免误杀编辑器、grep 等其他含 "codex-kitchen" 字样的进程
-MATCH_RE='^node .*codex-kitchen(\.js)?([[:space:]]|$)'
+MATCH_RE='^node .*(codex-kitchen(\.js)?|order-up-now)([[:space:]]|$)'
 
 collect_pids() {
   pgrep -f "$MATCH_RE" 2>/dev/null || true
