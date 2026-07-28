@@ -19,6 +19,11 @@ const MAX_VISIBLE = 12;             // 同屏厨师上限
 const REST_TIMEOUT = 60;            // 休息区打瞌睡超过此秒数 → 起身下班走出厨房（可配置）
 const LOITER_MAX = 18;              // 完工后原地歇脚（喝水/擦汗）超过此秒数 → 走回休息区（可配置）
 const DEG = Math.PI / 180;
+const ZOOM_MIN = 0.62, ZOOM_MAX = 1.8; // 滚轮缩放系数范围（<1 放大、>1 缩小）
+// 最大放大时的观察落点：厨房中心略偏南、视线略抬高——
+// 全景目标偏北（给餐厅区留画面），放大时绕它缩距会把厨房南侧裁出画面下缘，
+// 故 zoomK<1 时落点从全景目标向此点平滑收拢（见 _updateCamera）
+const KITCHEN_FOCUS = new THREE.Vector3(0, 0.6, 0.4);
 
 // 交谈中被找厨师的回应气泡（按回合轮替，配合点头/抬手小动作）
 const CHAT_ACKS = ['收到！', '好嘞～', '嗯嗯！', '明白！', '马上就好', 'OK！'];
@@ -787,7 +792,11 @@ export class KitchenRenderer {
     const az = v.az + azB;
     const pitch = Math.max(30 * DEG, Math.min(80 * DEG, v.pitch + piB));
     const dist = v.fitDist * v.zoomK;
-    const tgt = v.target;
+    // 放大（zoomK<1）时观察落点从偏北的全景目标平滑收拢到厨房中心（KITCHEN_FOCUS）：
+    // 全景目标 z 偏北（为餐厅区留画面），绕它直接缩距会把厨房南侧（画面下缘）裁掉
+    const focus = Math.max(0, Math.min(1, (1 - v.zoomK) / (1 - ZOOM_MIN)));
+    const tgt = this._camTgt || (this._camTgt = new THREE.Vector3());
+    tgt.copy(v.target).lerp(KITCHEN_FOCUS, focus);
     this.camera.position.set(
       tgt.x + dist * Math.cos(pitch) * Math.sin(az),
       tgt.y + dist * Math.sin(pitch),
@@ -850,7 +859,7 @@ export class KitchenRenderer {
     this._onUp = () => { this._drag = null; };
     this._onWheel = (e) => {
       e.preventDefault();
-      this.view.zoomK = Math.max(0.62, Math.min(1.8, this.view.zoomK * (1 + e.deltaY * 0.001)));
+      this.view.zoomK = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, this.view.zoomK * (1 + e.deltaY * 0.001)));
       this.lastInteract = this.clock.elapsedTime;
     };
     el.addEventListener('pointerdown', this._onDown);

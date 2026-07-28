@@ -66,6 +66,12 @@ const r = new KitchenRenderer(document.getElementById('app'));
 window.__renderer = r;
 r.setKitchen(kitchen, chefs);
 
+// 截图验证用：?zoom=0.62&az=0&pitch=60 直接设定轨道视角（dev-only，不影响正常交互）
+if (qs.get('zoom')) r.view.zoomK = Math.max(0.62, Math.min(1.8, parseFloat(qs.get('zoom')) || 1));
+if (qs.get('az')) r.view.az = parseFloat(qs.get('az')) * Math.PI / 180;
+if (qs.get('pitch')) { r.view.pitch = Math.max(30, Math.min(80, parseFloat(qs.get('pitch')) || 60)) * Math.PI / 180; r._fitCamera(); }
+r.lastInteract = r.clock.elapsedTime + 1e9; // 关掉静止呼吸视差，保证截图机位可复现
+
 // 无头截图模式：Chrome 只在最后触发一次 rAF，中途渲染不上屏。
 // 故用 setInterval 只推进模拟（step 不渲染），最后一帧由 rAF 正常渲染上屏。
 if (SHOT) {
