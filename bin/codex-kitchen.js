@@ -76,7 +76,7 @@ async function main() {
   if (!opts.demo) console.log(`   会话目录：${opts.sessionsDir}`);
   if (!opts.demo) console.log(`   启动回放：最近 ${opts.replaySessions} 个会话 × 尾部 ${opts.replayLines} 行（其余会话点击后按需加载）`);
   if (port !== opts.port) console.log(`   提示：端口 ${opts.port} 被占用，已自动改用 ${port}`);
-  console.log('   按 Ctrl+C 熄火关门。');
+  console.log('   按 Ctrl+C 熄火打烊。');
   console.log('');
 
   if (!opts.noOpen) openBrowser(url);
