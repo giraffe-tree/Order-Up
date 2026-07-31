@@ -235,6 +235,9 @@ async function main() {
     ok(dish1 && dish1.dish.task === '修好断线重连', `任务摘要剥离 markdown 加粗存入 dish.task（实际 ${dish1?.dish.task}）`);
     ok(dish1 && POOL_NAMES.has(dish1.dish.name) && dish1.dish.name === pickDish('修好断线重连@t:parent-1').name,
       `菜名来自菜品池且按任务确定性挑选（实际 ${dish1?.dish.name}）`);
+    // dish.chefId：出餐工单要能按稳定 id 找回厨师，不能只靠可能重名的 chef.name（见前端 store.js dish_served 分支）
+    ok(dish1 && dish1.dish.chefId === 'parent-1',
+      `dish_served 携带 chefId，与出餐厨师的稳定 id 一致（实际 ${dish1?.dish.chefId}）`);
     await fsp.appendFile(parent, line('event_msg', { type: 'task_complete', last_agent_message: '{"outcome":"allow"}' }, 46) + '\n');
     const dish2 = await sse.waitFor((e) => e.type === 'dish_served' && e.dish.ts > dish1.dish.ts, 9000, 'dish_served(JSON 兜底)').catch(() => null);
     ok(dish2 && !dish2.dish.task.startsWith('{') && !dish2.dish.task.startsWith('```') && dish2.dish.task.length >= 2

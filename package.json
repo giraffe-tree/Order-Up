@@ -27,7 +27,7 @@
     "dev": "node bin/codex-kitchen.js --demo",
     "demo": "node bin/codex-kitchen.js --demo",
     "restart": "bash start.sh",
-    "test": "node scripts/selftest-server.js"
+    "test": "node scripts/selftest-server.js && node scripts/selftest-store.js"
   },
   "license": "MIT",
   "files": [

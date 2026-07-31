@@ -63,7 +63,7 @@ codex-overcooked-by-kimi/
               "label": "短中文标签", "detail": "文件名或命令(截断80字)", "ts": 1721850000000,
               "target": "队友 chefId（仅 talk 与等队友的 think 携带；未解析到为 null，可缺省）" } }
 { "type": "chef_status",   "kitchenId": "k1", "chefId": "c1", "status": "cooking|idle|done" }
-{ "type": "dish_served",   "kitchenId": "k1", "dish": { "name": "...", "by": "chefName", "ts": 0 } }
+{ "type": "dish_served",   "kitchenId": "k1", "dish": { "name": "...", "by": "chefName", "chefId": "c1", "ts": 0 } }
 ```
 ```ts
 Kitchen = { id: string, name: string /* cwd basename */, cwd: string,
