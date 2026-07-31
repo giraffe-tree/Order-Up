@@ -41,4 +41,4 @@ http.createServer(async (req, res) => {
   } catch {
     res.writeHead(404); res.end('not found');
   }
-}).listen(port, () => console.log(`devtool-server up: http://127.0.0.1:${port}/ (root=${WEB})`));
+}).listen(port, '127.0.0.1', () => console.log(`devtool-server up: http://127.0.0.1:${port}/ (root=${WEB})`));

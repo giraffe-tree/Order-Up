@@ -38,9 +38,21 @@ function send(res, code, body, type = 'text/plain; charset=utf-8') {
   res.end(body);
 }
 
-export function startServer({ port, demo = false, sessionsDir, replaySessions, replayLines } = {}) {
+// 仅信任本机地址：绑定 127.0.0.1 后，同源页面发起的请求 Origin 只会是这几种形式之一。
+// 没有 Origin 头（直接导航 / curl 等非浏览器客户端）视为可信；有 Origin 但不在此集合内一律拒绝，
+// 防止恶意网页通过 DNS rebinding 等手段跨源读取本地厨房数据。
+function buildTrustedOrigins(port) {
+  return new Set([
+    `http://127.0.0.1:${port}`,
+    `http://localhost:${port}`,
+    `http://[::1]:${port}`,
+  ]);
+}
+
+export function startServer({ port, host = '127.0.0.1', demo = false, sessionsDir, replaySessions, replayLines } = {}) {
   return new Promise((resolve, reject) => {
     const clients = new Set();
+    let trustedOrigins = buildTrustedOrigins(port);
     const store = new KitchenStore({
       emit: (ev) => {
         const msg = `data: ${JSON.stringify(ev)}\n\n`;
@@ -74,6 +86,9 @@ export function startServer({ port, demo = false, sessionsDir, replaySessions, r
     });
 
     async function handleRequest(req, res) {
+      const origin = req.headers.origin;
+      if (origin && !trustedOrigins.has(origin)) { send(res, 403, 'Forbidden'); return; }
+
       let u;
       try { u = new URL(req.url, 'http://localhost'); } catch { send(res, 400, 'Bad Request'); return; }
 
@@ -108,11 +123,13 @@ export function startServer({ port, demo = false, sessionsDir, replaySessions, r
         return;
       }
 
-      if (u.pathname === '/api/events') {        res.writeHead(200, {
+      if (u.pathname === '/api/events') {
+        // 前端与本接口同源，无需（也不应）设置 Access-Control-Allow-Origin：
+        // 不下发该头时，跨源页面即使能发起请求也无法读取响应内容。
+        res.writeHead(200, {
           'Content-Type': 'text/event-stream; charset=utf-8',
           'Cache-Control': 'no-cache',
           Connection: 'keep-alive',
-          'Access-Control-Allow-Origin': '*',
         });
         res.write(`data: ${JSON.stringify({ type: 'snapshot', ...store.snapshot() })}\n\n`);
         clients.add(res);
@@ -139,9 +156,13 @@ export function startServer({ port, demo = false, sessionsDir, replaySessions, r
     }
 
     server.on('error', reject);
-    server.listen(port, () => {
+    server.listen(port, host, () => {
+      // 实际绑定端口可能与请求的 port 不同（port:0 由系统分配），据此重建可信 Origin 集合
+      const boundPort = server.address().port;
+      trustedOrigins = buildTrustedOrigins(boundPort);
       resolve({
-        port,
+        port: boundPort,
+        host,
         server,
         close() {
           clearInterval(tickTimer);
