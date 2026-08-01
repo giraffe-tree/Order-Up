@@ -21,23 +21,25 @@ function ok(cond, name) {
   else { failed++; failures.push(name); console.log(`  ✘ ${name}`); }
 }
 
-function get(port, pathname) {
+function get(port, pathname, headers = {}) {
   return new Promise((resolve, reject) => {
-    const req = http.get({ host: '127.0.0.1', port, path: pathname }, (res) => {
+    const req = http.get({ host: '127.0.0.1', port, path: pathname, headers }, (res) => {
       const chunks = [];
       res.on('data', (c) => chunks.push(c));
-      res.on('end', () => resolve({ status: res.statusCode, body: Buffer.concat(chunks).toString('utf8') }));
+      res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body: Buffer.concat(chunks).toString('utf8') }));
     });
     req.on('error', reject);
     req.setTimeout(5000, () => { req.destroy(new Error('请求超时')); });
   });
 }
 
-// SSE 客户端：返回 { events, close, waitFor(pred, ms) }
-function connectSSE(port) {
+// SSE 客户端：返回 { events, headers, close, waitFor(pred, ms) }
+function connectSSE(port, headers = {}) {
   const events = [];
   const waiters = [];
-  const req = http.get({ host: '127.0.0.1', port, path: '/api/events' }, (res) => {
+  let resHeaders = null;
+  const req = http.get({ host: '127.0.0.1', port, path: '/api/events', headers }, (res) => {
+    resHeaders = res.headers;
     let buf = '';
     res.on('data', (c) => {
       buf += c.toString('utf8');
@@ -59,6 +61,7 @@ function connectSSE(port) {
   req.on('error', () => {});
   return {
     events,
+    get headers() { return resHeaders; },
     waitFor(pred, ms = 8000, label = '事件') {
       const hit = events.find(pred);
       if (hit) return Promise.resolve(hit);
@@ -164,6 +167,28 @@ async function main() {
     handles.push(h1);
     const port1 = h1.server.address().port;
     ok(port1 > 0, '服务器在随机端口启动');
+
+    console.log('▶ 用例 1a：安全基线（仅监听 loopback / 无通配 CORS / Origin 校验）');
+    const boundAddr = h1.server.address().address;
+    ok(boundAddr !== '0.0.0.0' && boundAddr !== '::' && boundAddr !== '::0',
+      `服务器绑定地址是 loopback 而非通配地址（实际 ${boundAddr}）`);
+    ok(boundAddr === '127.0.0.1' || boundAddr === '::1',
+      `服务器显式绑定 127.0.0.1（实际 ${boundAddr}）`);
+    const snapNoOrigin = await get(port1, '/api/snapshot');
+    ok(snapNoOrigin.status === 200, '无 Origin 头的本地请求（curl 等非浏览器客户端）正常放行');
+    const snapGoodOrigin = await get(port1, '/api/snapshot', { Origin: `http://127.0.0.1:${port1}` });
+    ok(snapGoodOrigin.status === 200, '同源 Origin（http://127.0.0.1:<port>）请求正常放行');
+    const snapGoodOrigin2 = await get(port1, '/api/snapshot', { Origin: `http://localhost:${port1}` });
+    ok(snapGoodOrigin2.status === 200, '同源 Origin（http://localhost:<port>）请求正常放行');
+    const snapEvilOrigin = await get(port1, '/api/snapshot', { Origin: 'http://evil.example.com' });
+    ok(snapEvilOrigin.status === 403, `跨源 Origin 请求被拒绝（实际 HTTP ${snapEvilOrigin.status}）`);
+    const sseNoAcao = connectSSE(port1);
+    await sseNoAcao.waitFor((e) => e.type === 'snapshot', 5000, 'SSE 首帧').catch(() => null);
+    ok(!('access-control-allow-origin' in (sseNoAcao.headers || {})),
+      'SSE 响应不再下发 Access-Control-Allow-Origin: *（跨源页面无法读取数据）');
+    sseNoAcao.close();
+    const sseEvilOrigin = await get(port1, '/api/events', { Origin: 'http://evil.example.com' });
+    ok(sseEvilOrigin.status === 403, `跨源 Origin 的 SSE 连接也被拒绝（实际 HTTP ${sseEvilOrigin.status}）`);
 
     // watcher.start 是异步的，轮询等待回放完成
     let snap = null;
