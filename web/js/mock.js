@@ -110,7 +110,7 @@
         later(function () {
           // 菜名从菜品池取：seed 带流水号，每次出餐菜品各不相同；dish.task 保留任务摘要
           var d = dishPool ? dishPool.pickDish(step.detail + '@' + kid + '#' + dishIdx) : null;
-          var dish = { name: d ? d.name : DISH_NAMES[dishIdx % DISH_NAMES.length], task: step.detail, by: pick[1], ts: Date.now() };
+          var dish = { name: d ? d.name : DISH_NAMES[dishIdx % DISH_NAMES.length], task: step.detail, by: pick[1], chefId: pick[0], ts: Date.now() };
           dishIdx++;
           handlers.onEvent({ type: 'dish_served', kitchenId: kid, dish: dish });
         }, 450);

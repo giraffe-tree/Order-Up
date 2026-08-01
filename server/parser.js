@@ -200,7 +200,9 @@ export class KitchenStore {
     // dish.task 保留原任务摘要（兜底链结果），供订单流水展示。
     const d = pickDish(String(taskName || '') + '@' + kitchenId);
     const task = trunc(taskName, 24) || `第 ${k.servedCount} 道菜`;
-    const dish = { name: d.name, task, by: chef.name, ts };
+    // chefId 随 dish 一起下发：厨师名在跨厨房场景下可能重复（_assignChefName 只在厨房内去重），
+    // 前端「出餐」工单要与「完工」工单同色，必须按稳定 id 找厨师，不能只认名字。
+    const dish = { name: d.name, task, by: chef.name, chefId: chef.id, ts };
     this.emit({ type: 'dish_served', kitchenId, dish });
   }
 

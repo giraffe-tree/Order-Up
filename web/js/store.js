@@ -4,6 +4,7 @@
   'use strict';
 
   var MAX_FEED = 30;
+  var DEFAULT_CHEF_COLOR = '#d95f4b'; // 找不到厨师时的兜底色（理论上不该发生，仅防渲染崩溃）
 
   // cwd 目录名（浏览器无 node:path，手搓 basename；兼容 \ 与 / 分隔符）
   function baseName(p) {
@@ -27,7 +28,7 @@
       role: c.role || null,
       depth: typeof c.depth === 'number' ? c.depth : 0,
       status: c.status === 'cooking' || c.status === 'done' ? c.status : 'idle',
-      color: c.color || '#d95f4b',
+      color: c.color || DEFAULT_CHEF_COLOR,
       lastAction: c.lastAction || null
     };
   }
@@ -216,9 +217,13 @@
         // detail = 菜名 · 任务摘要（无 task 时只显示菜名）
         var dishDetail = dish.name || '';
         if (dish.task) dishDetail = dishDetail ? dishDetail + ' · ' + dish.task : dish.task;
+        // 按 chefId 找厨师取真实颜色，与 chef_action 完工工单同色（厨师名跨厨房可能重复，不可信）；
+        // 找不到厨师（旧数据无 chefId / id 未知）才退回默认色，保证不影响渲染。
+        var dishChef = dish.chefId != null ? findChef(k, String(dish.chefId)) : null;
         pushFeed(state, {
           ts: dish.ts || Date.now(), kitchenId: k.id, kitchenName: k.name,
-          chefName: dish.by || '厨师', color: '#d95f4b',
+          chefName: dish.by || (dishChef && dishChef.name) || '厨师',
+          color: (dishChef && dishChef.color) || DEFAULT_CHEF_COLOR,
           kind: 'serve', label: '出餐 ✅', detail: dishDetail
         });
         effects.push({ type: 'dish_served', kitchenId: k.id, dish: dish, servedCount: k.servedCount });
